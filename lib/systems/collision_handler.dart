@@ -164,6 +164,7 @@ class CollisionHandler {
     final playerRect = player.toRect();
     for (var enemy in enemies) {
       if (!enemy.isMounted) continue;
+      if (enemy.health <= 0) continue;
       if (playerRect.overlaps(enemy.toRect())) {
         player.takeDamage(GameConfig.enemyContactDamage);
         break; // Один удар за кадр

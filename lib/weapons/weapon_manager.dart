@@ -150,6 +150,7 @@ class WeaponManager extends Component {
 
         for (var enemy in enemyManager!.enemies) {
           if (!enemy.isMounted) continue;
+          if (enemy.health <= 0) continue;
           if (projectile.toRect().overlaps(enemy.toRect())) {
             enemy.takeDamage(projectile.damage);
             projectile.onHit();
