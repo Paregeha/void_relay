@@ -5,11 +5,27 @@ import 'package:flame/components.dart';
 import '../config/game_config.dart';
 import '../flame_game.dart';
 
+enum EnemyLifeState { alive, dying, dead }
+
 class BaseEnemy extends PositionComponent {
   Vector2 velocity = Vector2.zero();
   double health = GameConfig.baseEnemyHealth;
   bool useDefaultMovement = true;
   double defaultSpeedX = GameConfig.enemyDefaultSpeedX;
+  EnemyLifeState lifeState = EnemyLifeState.alive;
+
+  bool get isAlive => lifeState == EnemyLifeState.alive;
+  bool get isDying => lifeState == EnemyLifeState.dying;
+  bool get isDead => lifeState == EnemyLifeState.dead;
+
+  /// Can this enemy currently damage the player via body overlap.
+  bool get canDealContactDamage => isAlive && health > 0;
+
+  /// Contact damage value used by collision handler.
+  double get contactDamage => GameConfig.enemyContactDamage;
+
+  /// Hook for one-shot attack windows (e.g. crawler bite).
+  void onContactDamageApplied() {}
 
   @override
   Future<void> onLoad() async {
@@ -42,8 +58,11 @@ class BaseEnemy extends PositionComponent {
   }
 
   void takeDamage(double damage) {
+    if (!isAlive) return;
     health -= damage;
     if (health <= 0) {
+      health = 0;
+      lifeState = EnemyLifeState.dead;
       removeFromParent();
     }
   }

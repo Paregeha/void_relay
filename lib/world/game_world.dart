@@ -77,6 +77,8 @@ class GameWorld extends Component {
         case 'hover_drone':
           final drone = HoverDrone();
           drone.player = player;
+          drone.platforms = platforms;
+          drone.floorY = roomSize.y;
           enemy = drone;
         case 'sentry_turret':
           final turret = SentryTurret();

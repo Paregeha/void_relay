@@ -7,6 +7,7 @@ import '../../config/game_config.dart';
 import '../../core/utils/safe_asset_loader.dart';
 import '../../flame_game.dart';
 import '../../player/player_component.dart';
+import '../../world/platform/platform_component.dart';
 import '../base_enemy.dart';
 import '../enemy_manager.dart';
 import '../enemy_projectile_component.dart';
@@ -14,7 +15,15 @@ import 'hover_drone_ai.dart';
 
 enum HoverDroneAnimState { hover, move, aim, shoot, death }
 
-enum HoverDroneState { idleHover, patrolHover, aim, shoot, dying, destroyed }
+enum HoverDroneState {
+  idleHover,
+  patrolHover,
+  aim,
+  shoot,
+  dying,
+  falling,
+  landed,
+}
 
 class HoverDrone extends BaseEnemy {
   static const String _droneSheetPath =
@@ -50,6 +59,8 @@ class HoverDrone extends BaseEnemy {
   ];
 
   PlayerComponent? player;
+  List<PlatformComponent> platforms = const [];
+  double floorY = GameConfig.defaultWorldHeight;
   late HoverDroneAI ai;
   HoverDroneAnimState _animState = HoverDroneAnimState.hover;
   HoverDroneState _state = HoverDroneState.idleHover;
@@ -85,21 +96,10 @@ class HoverDrone extends BaseEnemy {
 
     _hoverBobTime += dt;
 
-    if (_state == HoverDroneState.dying) {
-      velocity.setZero();
-      _deathTimer -= dt;
-      _animState = HoverDroneAnimState.death;
+    if (_isDeathPhase) {
+      _updateDeathFall(dt);
       _updateVisualHoverOffset();
       _syncSpriteState();
-      if (_deathTimer <= 0) {
-        _state = HoverDroneState.destroyed;
-        removeFromParent();
-      }
-      return;
-    }
-
-    if (_state == HoverDroneState.destroyed) {
-      velocity.setZero();
       return;
     }
 
@@ -145,7 +145,8 @@ class HoverDrone extends BaseEnemy {
         _animState = HoverDroneAnimState.shoot;
         return;
       case HoverDroneState.dying:
-      case HoverDroneState.destroyed:
+      case HoverDroneState.falling:
+      case HoverDroneState.landed:
         _animState = HoverDroneAnimState.death;
         return;
     }
@@ -225,7 +226,8 @@ class HoverDrone extends BaseEnemy {
 
   void _tryShootAtPlayer() {
     if (_state == HoverDroneState.dying ||
-        _state == HoverDroneState.destroyed) {
+        _state == HoverDroneState.falling ||
+        _state == HoverDroneState.landed) {
       return;
     }
     final playerRef = player;
@@ -256,7 +258,8 @@ class HoverDrone extends BaseEnemy {
   @override
   void takeDamage(double damage) {
     if (_state == HoverDroneState.dying ||
-        _state == HoverDroneState.destroyed) {
+        _state == HoverDroneState.falling ||
+        _state == HoverDroneState.landed) {
       return;
     }
 
@@ -271,7 +274,8 @@ class HoverDrone extends BaseEnemy {
     _deathTimer = _deathAnimDuration;
     _shootAnimTimer = 0;
     _fireCooldown = double.infinity;
-    velocity.setZero();
+    velocity.x = 0;
+    velocity.y = 0;
   }
 
   void _syncSpriteState() {
@@ -281,11 +285,81 @@ class HoverDrone extends BaseEnemy {
 
   void _updateVisualHoverOffset() {
     if (_spriteGroup == null) return;
-    final yOffset =
-        _state == HoverDroneState.dying || _state == HoverDroneState.destroyed
+    final yOffset = _isDeathPhase
         ? 0.0
         : math.sin(_hoverBobTime * _hoverBobFrequency) * _hoverBobAmplitude;
     _spriteGroup!.position = Vector2(size.x / 2, size.y / 2 + yOffset);
+  }
+
+  bool get _isDeathPhase =>
+      _state == HoverDroneState.dying ||
+      _state == HoverDroneState.falling ||
+      _state == HoverDroneState.landed;
+
+  void _updateDeathFall(double dt) {
+    _animState = HoverDroneAnimState.death;
+    _shootAnimTimer = 0;
+    _fireCooldown = double.infinity;
+
+    if (_state == HoverDroneState.landed) {
+      velocity.setZero();
+      return;
+    }
+
+    _applyGravity(dt);
+    super.update(dt);
+    _resolveLanding(dt);
+
+    if (_state == HoverDroneState.dying) {
+      _deathTimer -= dt;
+      if (_deathTimer <= 0) {
+        _state = HoverDroneState.falling;
+      }
+    }
+  }
+
+  void _applyGravity(double dt) {
+    velocity.y += GameConfig.gravity * dt;
+    if (velocity.y > GameConfig.maxFallSpeed) {
+      velocity.y = GameConfig.maxFallSpeed;
+    }
+  }
+
+  void _resolveLanding(double dt) {
+    if (velocity.y < 0) return;
+
+    final droneRect = toRect();
+    final prevBottom = droneRect.bottom - velocity.y * dt;
+
+    for (final platform in platforms) {
+      final platformRect = platform.toRect();
+      final horizontalOverlap =
+          droneRect.right >
+              platformRect.left + GameConfig.platformCollisionTolerance &&
+          droneRect.left <
+              platformRect.right - GameConfig.platformCollisionTolerance;
+      if (!horizontalOverlap) continue;
+
+      final crossedTop =
+          prevBottom <=
+              platformRect.top + GameConfig.platformCollisionTolerance &&
+          droneRect.bottom >= platformRect.top;
+      if (!crossedTop) continue;
+
+      position.y = platformRect.top - size.y / 2;
+      _setLandedState();
+      return;
+    }
+
+    if (droneRect.bottom >= floorY) {
+      position.y = floorY - size.y / 2;
+      _setLandedState();
+    }
+  }
+
+  void _setLandedState() {
+    velocity.setZero();
+    _state = HoverDroneState.landed;
   }
 
   SpriteAnimation _buildClipAnimation(
