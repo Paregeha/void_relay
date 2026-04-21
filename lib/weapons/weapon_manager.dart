@@ -58,6 +58,8 @@ class WeaponManager extends Component {
   List<BaseWeapon> get loadoutWeapons =>
       List<BaseWeapon>.unmodifiable(_loadout);
 
+  bool get isTriggerHeld => _triggerHeld;
+
   void setLoadout(List<BaseWeapon> weapons, {int initialIndex = 0}) {
     _loadout
       ..clear()
