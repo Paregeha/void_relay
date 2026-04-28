@@ -9,15 +9,24 @@ import '../flame_game.dart';
 import '../player/player_component.dart';
 import '../systems/collision_handler.dart';
 import '../systems/interaction_system.dart';
+import 'background/background_component.dart';
 import 'interactive/cooling_station.dart';
 import 'interactive/relay_gate.dart';
 import 'interactive/repair_terminal.dart';
 import 'interactive/switch_console.dart';
 import 'platform/platform_component.dart';
+import 'room/room.dart';
 import 'room/room_builder.dart';
 import 'room/room_types.dart';
 
 class GameWorld extends Component {
+  static const int backgroundPriority = -1000;
+  static const int terrainPriority = -500;
+  static const int enemyPriority = 0;
+  static const int playerPriority = 100;
+  static const int projectilePriority = 200;
+  static const int effectsPriority = 300;
+
   final int roomIndex;
   final double playerMaxHealthBonus;
 
@@ -45,12 +54,16 @@ class GameWorld extends Component {
     roomTypes = room.roomTypes;
     roomSize = room.roomSize.clone();
 
+    add(BackgroundComponent(roomSize: roomSize)..priority = backgroundPriority);
+
     for (final platform in platforms) {
+      platform.priority = terrainPriority;
       add(platform);
     }
 
     // Spawn player
     player = PlayerComponent();
+    player.priority = playerPriority;
     if (playerMaxHealthBonus > 0) {
       player.maxHealth += playerMaxHealthBonus;
       player.health = player.maxHealth;
@@ -62,38 +75,28 @@ class GameWorld extends Component {
     add(interactionSystem);
 
     // Spawn enemies
-    enemyManager = EnemyManager();
+    enemyManager = EnemyManager(
+      enemyRenderPriority: enemyPriority,
+      projectileRenderPriority: projectilePriority,
+    )..priority = enemyPriority;
     add(enemyManager);
     player.weaponManager.setEnemyManager(enemyManager);
 
     for (final spawn in room.enemySpawns) {
-      BaseEnemy enemy;
-      switch (spawn.type) {
-        case 'crawler':
-          final crawler = Crawler();
-          crawler.player = player;
-          crawler.platforms = platforms;
-          enemy = crawler;
-        case 'hover_drone':
-          final drone = HoverDrone();
-          drone.player = player;
-          drone.platforms = platforms;
-          drone.floorY = roomSize.y;
-          enemy = drone;
-        case 'sentry_turret':
-          final turret = SentryTurret();
-          turret.player = player;
-          enemy = turret;
-        default:
-          enemy = BaseEnemy();
+      final enemy = _createEnemyForSpawn(spawn);
+      if (enemy == null) {
+        continue;
       }
-      enemy.position = spawn.position.clone();
+      enemy.priority = enemyPriority;
       enemyManager.addEnemy(enemy);
     }
 
     // Spawn cooling stations
     for (final pos in room.coolingStationSpawns) {
-      add(CoolingStation(position: pos, player: player));
+      add(
+        CoolingStation(position: pos, player: player)
+          ..priority = terrainPriority,
+      );
     }
 
     // Spawn switch consoles
@@ -103,6 +106,7 @@ class GameWorld extends Component {
         player: player,
         onToggled: _onSwitchConsoleToggled,
       );
+      console.priority = terrainPriority;
       add(console);
       interactionSystem.register(
         InteractionBinding(
@@ -119,6 +123,7 @@ class GameWorld extends Component {
         position: pos,
         onRepairCompleted: _onRepairTerminalCompleted,
       );
+      terminal.priority = terrainPriority;
       add(terminal);
       interactionSystem.register(
         InteractionBinding(
@@ -142,7 +147,7 @@ class GameWorld extends Component {
           position: room.relayGatePosition!,
           player: player,
           onReached: () => _completeSector('Relay reached'),
-        ),
+        )..priority = terrainPriority,
       );
     }
 
@@ -238,4 +243,53 @@ class GameWorld extends Component {
   double get sectorElapsedSeconds => _sectorElapsedSeconds;
 
   int get sectorRiskLevel => roomIndex;
+
+  BaseEnemy? _createEnemyForSpawn(EnemySpawn spawn) {
+    switch (spawn.type) {
+      case 'crawler':
+        final crawler = Crawler();
+        crawler.player = player;
+        crawler.platforms = platforms;
+        final snappedBaselineY = _resolveCrawlerBaselineY(
+          spawn.position.x,
+          spawn.position.y,
+        );
+        crawler.position = Vector2(spawn.position.x, snappedBaselineY);
+        return crawler;
+      case 'hover_drone':
+        final drone = HoverDrone();
+        drone.player = player;
+        drone.platforms = platforms;
+        drone.floorY = roomSize.y;
+        drone.position = spawn.position.clone();
+        return drone;
+      case 'sentry_turret':
+        final turret = SentryTurret();
+        turret.player = player;
+        turret.position = spawn.position.clone();
+        return turret;
+      default:
+        return null;
+    }
+  }
+
+  double _resolveCrawlerBaselineY(double x, double fallbackY) {
+    double? closestTop;
+    double closestDistance = double.infinity;
+
+    for (final platform in platforms) {
+      final rect = platform.toRect();
+      // Ignore vertical walls and non-ground geometry for crawler grounding.
+      if (rect.width <= rect.height) continue;
+      if (x < rect.left || x > rect.right) continue;
+
+      final distance = (rect.top - fallbackY).abs();
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestTop = rect.top;
+      }
+    }
+
+    return closestTop ?? fallbackY;
+  }
 }

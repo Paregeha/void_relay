@@ -22,7 +22,7 @@ Widget _buildHarness(VoidRelayGame game) {
         UiManager.gameOverOverlay: (_, game) =>
             GameOverScreen(onRestart: game.resetAfterGameOver),
         UiManager.transitionOverlay: (_, game) => SectorTransitionScreen(
-          onContinue: game.completeSectorTransition,
+          onContinue: game.openRewardStepFromTransition,
           currentSectorNumber: game.currentRoomIndex + 1,
           nextSectorNumber: game.currentRoomIndex + 2,
           transitionReason: game.transitionReason,

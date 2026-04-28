@@ -76,7 +76,9 @@ class VoidRelayGame extends FlameGame {
     gameWorld = newWorld;
     world.add(newWorld);
 
-    final newParticles = ParticleSystem();
+    final newParticles = ParticleSystem(
+      renderPriority: GameWorld.effectsPriority,
+    );
     particleSystem = newParticles;
     newWorld.add(newParticles);
 
@@ -114,7 +116,9 @@ class VoidRelayGame extends FlameGame {
     gameWorld = world;
     this.world.add(world);
 
-    final worldParticles = ParticleSystem();
+    final worldParticles = ParticleSystem(
+      renderPriority: GameWorld.effectsPriority,
+    );
     particleSystem = worldParticles;
     world.add(worldParticles);
 

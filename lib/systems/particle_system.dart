@@ -6,6 +6,7 @@ import 'package:flame/components.dart';
 class ParticleSystem extends Component {
   static const int _maxParticles = 120;
   static const int _maxPulses = 10;
+  static const int defaultRenderPriority = 300;
 
   final List<_VfxParticle> _particles = [];
   final List<_WarningPulse> _pulses = [];
@@ -14,6 +15,9 @@ class ParticleSystem extends Component {
   int _lastHitSparkAtMs = 0;
   int _lastDashTrailAtMs = 0;
   int _lastWarningPulseAtMs = 0;
+
+  ParticleSystem({int renderPriority = defaultRenderPriority})
+    : super(priority: renderPriority);
 
   void spawnHitSpark(Vector2 center) {
     final now = DateTime.now().millisecondsSinceEpoch;

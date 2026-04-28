@@ -45,7 +45,9 @@ void main() {
       expect(game.isGameplayInputBlocked, isTrue);
     });
 
-    testWidgets('complete transition restores control state', (tester) async {
+    testWidgets('reward flow restores control state after transition', (
+      tester,
+    ) async {
       final game = VoidRelayGame();
       await tester.pumpWidget(_buildHarness(game));
 
@@ -53,11 +55,13 @@ void main() {
 
       game.triggerSectorTransition('Room cleared');
       await tester.pump();
-      game.completeSectorTransition();
+      game.openRewardStepFromTransition();
+      game.applyRewardAndAdvance(SectorRewardChoice.hullPatch);
       await tester.pump();
 
       expect(game.isTransitionOpen, isFalse);
       expect(game.isGameplayInputBlocked, isFalse);
+      expect(game.isRewardOpen, isFalse);
       expect(game.currentRoomIndex, 1);
     });
   });

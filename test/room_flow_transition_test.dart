@@ -55,8 +55,12 @@ void main() {
         isTrue,
       );
 
-      // Complete transition and verify next room type profile
-      game.completeSectorTransition();
+      // Continue transition to reward, then apply reward to advance.
+      game.openRewardStepFromTransition();
+      await tester.pump();
+      expect(game.isRewardOpen, isTrue);
+
+      game.applyRewardAndAdvance(SectorRewardChoice.coolingPulse);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
 

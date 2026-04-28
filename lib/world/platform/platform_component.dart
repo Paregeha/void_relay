@@ -1,4 +1,5 @@
 import 'dart:ui';
+
 import 'package:flame/components.dart';
 
 class PlatformComponent extends PositionComponent {

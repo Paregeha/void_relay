@@ -6,6 +6,20 @@ import 'package:void_relay/world/platform/platform_component.dart';
 
 void main() {
   group('Player-platform collision regression', () {
+    test('player cannot move past the left world boundary', () async {
+      final player = PlayerComponent();
+      await player.onLoad();
+
+      player.position = Vector2(6, 200);
+      player.velocity = Vector2(-180, 0);
+
+      final collisions = CollisionHandler(player: player, platforms: const []);
+      collisions.update(1 / 60);
+
+      expect(player.position.x, closeTo(player.size.x / 2, 0.001));
+      expect(player.velocity.x, closeTo(0, 0.001));
+    });
+
     test('lands on floor after deep downward step (no tunneling)', () async {
       final player = PlayerComponent();
       await player.onLoad();

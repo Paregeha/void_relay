@@ -10,6 +10,8 @@ import 'base_weapon.dart';
 import 'projectile_component.dart';
 
 class WeaponManager extends Component {
+  static const int projectileRenderPriority = 200;
+
   final Component owner;
   final List<BaseWeapon> _loadout = [];
   int _currentWeaponIndex = 0;
@@ -240,6 +242,7 @@ class WeaponManager extends Component {
       projectile.position = player.absolutePosition + projectile.position;
     }
 
+    projectile.priority = projectileRenderPriority;
     projectiles.add(projectile);
 
     // Projectiles must live in world space, not as child of player.

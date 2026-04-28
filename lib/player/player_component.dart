@@ -15,58 +15,10 @@ enum PlayerAnimState { idle, run, jump, dash, gun, death }
 
 enum PlayerLifeState { alive, dying, dead }
 
-class PlayerAnimationClip {
-  const PlayerAnimationClip({
-    required this.row,
-    required this.columns,
-    required this.stepTime,
-    this.loop = true,
-  });
-
-  final int row;
-  final List<int> columns;
-  final double stepTime;
-  final bool loop;
-}
-
 class PlayerComponent extends PositionComponent {
-  static const String _playerSpriteSheetPath =
+  static const String _playerSheetPath =
       'assets/sprites/player/player_sheet.png';
-  static const String _playerSpriteSheetExamplePath =
-      'assets/sprites/player/player_sheet_example.png';
-  static const double _spriteCellSize = 512.0;
-  static const int _sheetColumnCount = 7;
-
-  // Fixed 5x7 sheet layout; only listed columns are used for each animation.
-  static const Map<PlayerAnimState, PlayerAnimationClip> spriteClips = {
-    PlayerAnimState.idle: PlayerAnimationClip(
-      row: 0,
-      columns: [0, 1, 2, 3],
-      stepTime: 0.14,
-    ),
-    PlayerAnimState.jump: PlayerAnimationClip(
-      row: 1,
-      columns: [0, 1, 2],
-      stepTime: 0.12,
-      loop: false,
-    ),
-    PlayerAnimState.run: PlayerAnimationClip(
-      row: 2,
-      columns: [0, 1, 2, 3, 4, 5, 6],
-      stepTime: 0.09,
-    ),
-    PlayerAnimState.gun: PlayerAnimationClip(
-      row: 3,
-      columns: [0, 1, 2],
-      stepTime: 0.11,
-    ),
-    PlayerAnimState.death: PlayerAnimationClip(
-      row: 4,
-      columns: [0, 1, 2],
-      stepTime: 0.14,
-      loop: false,
-    ),
-  };
+  static final Vector2 _playerSheetFrameSize = Vector2(512, 512);
 
   Vector2 velocity = Vector2.zero();
   double maxHealth = GameConfig.playerMaxHealth;
@@ -83,7 +35,7 @@ class PlayerComponent extends PositionComponent {
   double _animTime = 0.0;
   PlayerLifeState _lifeState = PlayerLifeState.alive;
 
-  SpriteAnimationGroupComponent<PlayerAnimState>? _spriteGroup;
+  SpriteAnimationGroupComponent<PlayerAnimState>? _spriteVisual;
   late PlayerController _controller;
   late WeaponManager weaponManager;
 
@@ -100,7 +52,7 @@ class PlayerComponent extends PositionComponent {
     weaponManager = WeaponManager(this);
     add(weaponManager);
     _initDefaultLoadout();
-    await _tryInitSpriteAnimation();
+    await _tryInitSpriteVisual();
   }
 
   void _initDefaultLoadout() {
@@ -132,11 +84,7 @@ class PlayerComponent extends PositionComponent {
     }
 
     _updateAnimationState();
-    if (_spriteGroup != null) {
-      _spriteGroup!.current = _resolveVisualAnimState();
-      // Mirror sprite when moving left (sheet contains right-facing frames).
-      _spriteGroup!.scale = Vector2(facingDirection < 0 ? -1 : 1, 1);
-    }
+    _syncSpriteVisual();
 
     if (_dashAnimTimer > 0 && _dashTrailCooldown <= 0) {
       final game = findGame();
@@ -149,8 +97,9 @@ class PlayerComponent extends PositionComponent {
 
   @override
   void render(Canvas canvas) {
+    // super.render propagates to children, including sprite animation group.
     super.render(canvas);
-    if (_spriteGroup == null) {
+    if (_spriteVisual == null) {
       final paint = Paint()..color = _resolvePlaceholderColor();
       canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y), paint);
     }
@@ -268,23 +217,22 @@ class PlayerComponent extends PositionComponent {
   }
 
   PlayerAnimState _resolveVisualAnimState() {
-    // Visual mapping from logical states to available sprite sheet rows.
-    if (_animState == PlayerAnimState.jump) {
+    if (_animState == PlayerAnimState.death) return PlayerAnimState.death;
+    if (_animState == PlayerAnimState.jump ||
+        _animState == PlayerAnimState.dash) {
       return PlayerAnimState.jump;
     }
-    if (_animState == PlayerAnimState.run) {
-      return PlayerAnimState.run;
-    }
-    if (_animState == PlayerAnimState.dash) {
-      return PlayerAnimState.gun;
-    }
-    if (_animState == PlayerAnimState.death) {
-      return PlayerAnimState.death;
-    }
-    if (_animState == PlayerAnimState.gun) {
-      return PlayerAnimState.gun;
-    }
+    if (_animState == PlayerAnimState.run) return PlayerAnimState.run;
+    if (_animState == PlayerAnimState.gun) return PlayerAnimState.gun;
     return PlayerAnimState.idle;
+  }
+
+  void _syncSpriteVisual() {
+    final visual = _spriteVisual;
+    if (visual == null) return;
+
+    visual.current = _resolveVisualAnimState();
+    visual.scale = Vector2(facingDirection < 0 ? -1 : 1, 1);
   }
 
   Color _resolvePlaceholderColor() {
@@ -334,31 +282,89 @@ class PlayerComponent extends PositionComponent {
     );
   }
 
-  // ── Sprite animation ──────────────────────────────────────────────────────
+  // ── Sprite visual layer ───────────────────────────────────────────────────
 
-  Future<void> _tryInitSpriteAnimation() async {
-    final image =
-        await loadUiImageSafe(_playerSpriteSheetPath) ??
-        await loadUiImageSafe(_playerSpriteSheetExamplePath);
+  Future<void> _tryInitSpriteVisual() async {
+    final image = await loadUiImageSafe(_playerSheetPath);
     if (image == null) {
-      _spriteGroup = null;
+      _spriteVisual = null;
       return;
     }
 
     final animations = <PlayerAnimState, SpriteAnimation>{
-      for (final entry in spriteClips.entries)
-        entry.key: _buildAnimation(image, entry.value),
+      PlayerAnimState.idle: _buildSheetAnimation(
+        image,
+        row: 0,
+        columns: const [0, 1, 2, 3],
+        stepTime: 0.16,
+      ),
+      PlayerAnimState.jump: _buildSheetAnimation(
+        image,
+        row: 1,
+        columns: const [0, 1, 2],
+        stepTime: 0.12,
+      ),
+      PlayerAnimState.run: _buildSheetAnimation(
+        image,
+        row: 2,
+        columns: const [0, 1, 2, 3, 4, 5, 6],
+        stepTime: 0.09,
+      ),
+      PlayerAnimState.gun: _buildSheetAnimation(
+        image,
+        row: 3,
+        columns: const [0, 1, 2],
+        stepTime: 0.1,
+      ),
+      PlayerAnimState.death: _buildSheetAnimation(
+        image,
+        row: 4,
+        columns: const [0, 1, 2],
+        stepTime: 0.12,
+        loop: false,
+      ),
+      // Dash reuses run frames for now.
+      PlayerAnimState.dash: _buildSheetAnimation(
+        image,
+        row: 2,
+        columns: const [0, 1, 2, 3, 4, 5, 6],
+        stepTime: 0.08,
+      ),
     };
 
-    _spriteGroup = SpriteAnimationGroupComponent<PlayerAnimState>(
+    _spriteVisual = SpriteAnimationGroupComponent<PlayerAnimState>(
       animations: animations,
-      current: _animState,
+      current: _resolveVisualAnimState(),
       size: size,
-      // Keep visual pivot at center so horizontal mirror does not shift sprite.
-      anchor: Anchor.center,
       position: size / 2,
+      anchor: Anchor.center,
     );
-    add(_spriteGroup!);
+
+    await add(_spriteVisual!);
+    _syncSpriteVisual();
+  }
+
+  SpriteAnimation _buildSheetAnimation(
+    Image image, {
+    required int row,
+    required List<int> columns,
+    required double stepTime,
+    bool loop = true,
+  }) {
+    final sprites = columns
+        .map(
+          (column) => Sprite(
+            image,
+            srcPosition: Vector2(
+              column * _playerSheetFrameSize.x,
+              row * _playerSheetFrameSize.y,
+            ),
+            srcSize: _playerSheetFrameSize,
+          ),
+        )
+        .toList(growable: false);
+
+    return SpriteAnimation.spriteList(sprites, stepTime: stepTime, loop: loop);
   }
 
   void beginDying() {
@@ -373,29 +379,5 @@ class PlayerComponent extends PositionComponent {
     _lifeState = PlayerLifeState.dead;
     velocity.setZero();
     _setAnimationState(PlayerAnimState.death);
-  }
-
-  SpriteAnimation _buildAnimation(Image image, PlayerAnimationClip clip) {
-    assert(
-      clip.columns.every((column) => column >= 0 && column < _sheetColumnCount),
-      'Player sprite column is outside fixed 0..${_sheetColumnCount - 1} range.',
-    );
-    final sprites = clip.columns
-        .map(
-          (column) => Sprite(
-            image,
-            srcPosition: Vector2(
-              column * _spriteCellSize,
-              clip.row * _spriteCellSize,
-            ),
-            srcSize: Vector2.all(_spriteCellSize),
-          ),
-        )
-        .toList(growable: false);
-    return SpriteAnimation.spriteList(
-      sprites,
-      stepTime: clip.stepTime,
-      loop: clip.loop,
-    );
   }
 }

@@ -21,8 +21,35 @@ class CollisionHandler {
 
   void update(double dt) {
     _resolvePlatformCollisions(dt);
+    _clampPlayerToLeftWorldBoundary();
     _handleEnemyContacts();
     _handleEnemyProjectiles();
+  }
+
+  void _clampPlayerToLeftWorldBoundary() {
+    const boundarySeparationEpsilon = 0.1;
+    var minCenterX = player.size.x / 2;
+
+    // If a left wall exists (gray border), use its inner edge as the limit.
+    for (final platform in platforms) {
+      final rect = platform.toRect();
+      final isWall = !_isVerticalCollisionSurface(rect);
+      if (!isWall) continue;
+      if (rect.left > GameConfig.platformCollisionTolerance) continue;
+
+      final wallMinCenterX =
+          rect.right + player.size.x / 2 + boundarySeparationEpsilon;
+      if (wallMinCenterX > minCenterX) {
+        minCenterX = wallMinCenterX;
+      }
+    }
+
+    if (player.position.x < minCenterX) {
+      player.position.x = minCenterX;
+      if (player.velocity.x < 0) {
+        player.velocity.x = 0;
+      }
+    }
   }
 
   void _resolvePlatformCollisions(double dt) {
@@ -41,9 +68,7 @@ class CollisionHandler {
     const sideSeparationEpsilon = 0.1;
     for (var platform in platforms) {
       final platformRect = platform.toRect();
-      if (!_isVerticalCollisionSurface(platformRect)) {
-        continue;
-      }
+      final isVerticalSurface = _isVerticalCollisionSurface(platformRect);
       final topPenetration = playerRect.bottom - platformRect.top;
       final bottomPenetration = platformRect.bottom - playerRect.top;
       // Перевірка: гравець зверху, рухається вниз, і торкається платформи
@@ -121,7 +146,8 @@ class CollisionHandler {
         break;
       }
 
-      if ((verticalCheck || embeddedFromAbove) &&
+      if (isVerticalSurface &&
+          (verticalCheck || embeddedFromAbove) &&
           horizontalCheck &&
           hasStableVerticalSupport) {
         player.position.y = platformRect.top - player.size.y / 2;
@@ -143,7 +169,8 @@ class CollisionHandler {
           bottomPenetration <= maxFallbackPenetration &&
           prevTop >= platformRect.bottom - maxFallbackPenetration &&
           (player.velocity.y < 0 || player.velocity.x.abs() < 1);
-      if ((hitFromBelow || embeddedFromBelow) &&
+      if (isVerticalSurface &&
+          (hitFromBelow || embeddedFromBelow) &&
           horizontalCheck &&
           hasStableVerticalSupport) {
         player.position.y = platformRect.bottom + player.size.y / 2;

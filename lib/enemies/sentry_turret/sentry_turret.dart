@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flame/components.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../config/game_config.dart';
 import '../../core/utils/safe_asset_loader.dart';
@@ -13,6 +14,11 @@ import 'turret_ai.dart';
 enum SentryTurretAnimState { idle, alert }
 
 class SentryTurret extends BaseEnemy {
+  static const List<String> _turretSheetPaths = [
+    'assets/sprites/enemies/sentry_turret_sheet.png',
+    'assets/sprites/enemies/turret_sheet.png',
+  ];
+
   PlayerComponent? player;
   late TurretAI ai;
 
@@ -58,8 +64,9 @@ class SentryTurret extends BaseEnemy {
 
   @override
   void render(Canvas canvas) {
-    super.render(canvas);
+    // BaseEnemy draws a blue debug rectangle; keep it only as fallback.
     if (_spriteGroup == null) {
+      super.render(canvas);
       final paint = Paint()..color = _resolvePlaceholderColor();
       canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y), paint);
     }
@@ -86,9 +93,7 @@ class SentryTurret extends BaseEnemy {
   }
 
   Future<void> _tryInitSpriteAnimation() async {
-    final image = await loadUiImageSafe(
-      'assets/sprites/enemies/sentry_turret_sheet.png',
-    );
+    final image = await _loadTurretSheet();
     if (image == null) {
       _spriteGroup = null;
       return;
@@ -121,6 +126,25 @@ class SentryTurret extends BaseEnemy {
       size: size,
     );
     add(_spriteGroup!);
+  }
+
+  Future<Image?> _loadTurretSheet() async {
+    for (final path in _turretSheetPaths) {
+      final image = await loadUiImageSafe(path);
+      if (image != null) {
+        if (kDebugMode) {
+          debugPrint('SENTRY_TURRET sprite loaded: $path');
+        }
+        return image;
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        'SENTRY_TURRET sprite missing. Expected one of: ${_turretSheetPaths.join(', ')}',
+      );
+    }
+    return null;
   }
 
   void _tryShootAtPlayer() {
