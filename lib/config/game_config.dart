@@ -1,4 +1,8 @@
 class GameConfig {
+  // --- Feature toggles (temporary cleanup mode) ---
+  static const bool enableEnemies = false;
+  static const bool enableCoreHeating = false;
+
   // --- Camera / viewport ---
   static const double logicalWidth = 960.0;
   static const double logicalHeight = 540.0;
@@ -64,9 +68,11 @@ class GameConfig {
 
   // --- Collision ---
   static const double platformCollisionTolerance = 8.0;
+  static const double platformSnapTolerance = 4.0;
+  static const double horizontalCollisionTolerance = 1.0;
 
   // --- Heat system ---
-  static const bool heatEnabled = true;
+  static const bool heatEnabled = enableCoreHeating;
   static const double heatIncreasePerSecond = 6.0;
   static const double maxHeat = 100.0;
   static const double overheatThreshold = 100.0;

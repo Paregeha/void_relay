@@ -22,8 +22,9 @@ class UiManager {
   double readMaxHealth(VoidRelayGame game) =>
       game.gameWorld?.player.maxHealth ?? 100.0;
 
-  double readHeat(VoidRelayGame game) =>
-      game.heatBloc?.state.currentHeat ?? 0.0;
+  double readHeat(VoidRelayGame game) => GameConfig.enableCoreHeating
+      ? (game.heatBloc?.state.currentHeat ?? 0.0)
+      : 0.0;
 
   double readMaxHeat() => GameConfig.maxHeat;
 
@@ -141,7 +142,7 @@ class UiManager {
     if (healthRatio <= 0.35) {
       return objectiveRepairRequired;
     }
-    if (heatRatio >= 0.7) {
+    if (GameConfig.enableCoreHeating && heatRatio >= 0.7) {
       return objectiveCoolingRecommended;
     }
     if (game.hasAliveHostiles) {

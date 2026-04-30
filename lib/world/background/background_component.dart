@@ -2,6 +2,9 @@ import 'dart:ui';
 
 import 'package:flame/components.dart';
 
+import '../../core/debug/render_trace.dart';
+import '../../player/player_component.dart';
+
 class BackgroundComponent extends PositionComponent {
   final Vector2 roomSize;
 
@@ -26,6 +29,10 @@ class BackgroundComponent extends PositionComponent {
 
   @override
   void render(Canvas canvas) {
+    if (PlayerComponent.debugTraceRenderSequence) {
+      RenderTrace.log('Background.render priority=$priority');
+    }
+
     // Base dark gradient feel with layered parallax strips.
     _drawLayer(
       canvas,

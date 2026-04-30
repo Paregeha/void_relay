@@ -14,6 +14,9 @@ class GameHud extends StatefulWidget {
 
   const GameHud({super.key, required this.game});
 
+  /// CLEANUP: set false to hide weapon slot HUD during Player animation testing.
+  static const bool debugShowWeaponHud = false;
+
   @override
   State<GameHud> createState() => _GameHudState();
 }
@@ -78,8 +81,10 @@ class _GameHudState extends State<GameHud> {
                       children: [
                         HealthBar(current: health, max: maxHealth),
                         const SizedBox(height: 10),
-                        HeatBar(current: heat, max: maxHeat),
-                        const SizedBox(height: 10),
+                        if (GameConfig.enableCoreHeating) ...[
+                          HeatBar(current: heat, max: maxHeat),
+                          const SizedBox(height: 10),
+                        ],
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 10,
@@ -103,15 +108,16 @@ class _GameHudState extends State<GameHud> {
                     ),
                   ),
                   const Spacer(),
-                  Align(
-                    alignment: Alignment.bottomLeft,
-                    child: WeaponSlot(
-                      activeWeaponName: activeWeaponName,
-                      activeWeaponSlot: activeWeaponSlot,
-                      secondaryWeaponName: secondaryWeaponName,
-                      secondaryWeaponSlot: secondaryWeaponSlot,
+                  if (GameHud.debugShowWeaponHud)
+                    Align(
+                      alignment: Alignment.bottomLeft,
+                      child: WeaponSlot(
+                        activeWeaponName: activeWeaponName,
+                        activeWeaponSlot: activeWeaponSlot,
+                        secondaryWeaponName: secondaryWeaponName,
+                        secondaryWeaponSlot: secondaryWeaponSlot,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),

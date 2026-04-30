@@ -8,6 +8,7 @@ import '../flame_game.dart';
 
 class HeatSystem extends Component {
   final HeatBloc heatBloc;
+  bool _didLogDisabled = false;
 
   HeatSystem({required this.heatBloc});
 
@@ -15,7 +16,14 @@ class HeatSystem extends Component {
   void update(double dt) {
     super.update(dt);
 
-    if (!GameConfig.heatEnabled) return;
+    if (!GameConfig.enableCoreHeating) {
+      if (!_didLogDisabled) {
+        _didLogDisabled = true;
+        print('[CoreHeat] disabled by enableCoreHeating=false');
+      }
+      print('[CoreHeat] heat update skipped');
+      return;
+    }
 
     final game = findGame();
     if (game is VoidRelayGame && game.isGameplayInputBlocked) {

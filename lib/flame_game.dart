@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flame/camera.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'config/game_config.dart';
 import 'core/bloc/heat_bloc.dart';
 import 'core/bloc/states/heat_state.dart';
+import 'core/debug/render_trace.dart';
 import 'player/player_component.dart';
 import 'sound_assets.dart';
 import 'systems/hazard_system.dart';
@@ -139,6 +142,9 @@ class VoidRelayGame extends FlameGame {
 
   @override
   void update(double dt) {
+    if (PlayerComponent.debugTraceRenderSequence) {
+      RenderTrace.beginFrame(source: 'VoidRelayGame.update');
+    }
     super.update(dt);
 
     _updateAppHotkeys();
@@ -154,9 +160,11 @@ class VoidRelayGame extends FlameGame {
       return;
     }
 
-    final currentHeatState = heatBloc?.state;
-    if (!_isGameOverShown && currentHeatState is HeatOverheated) {
-      triggerGameOver();
+    if (GameConfig.enableCoreHeating) {
+      final currentHeatState = heatBloc?.state;
+      if (!_isGameOverShown && currentHeatState is HeatOverheated) {
+        triggerGameOver();
+      }
     }
   }
 
@@ -233,6 +241,24 @@ class VoidRelayGame extends FlameGame {
       current.x + (targetX - current.x) * smoothing,
       current.y + (targetY - current.y) * smoothing,
     );
+  }
+
+  @override
+  void render(Canvas canvas) {
+    if (PlayerComponent.debugTraceRenderSequence) {
+      RenderTrace.log('VoidRelayGame.render START (before super.render)');
+    }
+
+    super.render(canvas);
+
+    if (PlayerComponent.debugTraceRenderSequence) {
+      RenderTrace.log('VoidRelayGame.render END (after super.render)');
+      RenderTrace.log(
+        'HUD active=${overlays.isActive(UiManager.hudOverlay)} '
+        'Pause=${overlays.isActive(UiManager.pauseOverlay)} '
+        'GameOver=${overlays.isActive(UiManager.gameOverOverlay)}',
+      );
+    }
   }
 
   @override

@@ -23,7 +23,6 @@ class SentryTurret extends BaseEnemy {
   late TurretAI ai;
 
   SentryTurretAnimState _animState = SentryTurretAnimState.idle;
-  double _animTime = 0;
   SpriteAnimationGroupComponent<SentryTurretAnimState>? _spriteGroup;
   double _fireCooldown = 0.0;
 
@@ -41,7 +40,6 @@ class SentryTurret extends BaseEnemy {
 
   @override
   void update(double dt) {
-    _animTime += dt;
     _fireCooldown -= dt;
     _updateAiAndAnimation(dt);
     if (_spriteGroup != null) {
@@ -64,12 +62,32 @@ class SentryTurret extends BaseEnemy {
 
   @override
   void render(Canvas canvas) {
-    // BaseEnemy draws a blue debug rectangle; keep it only as fallback.
-    if (_spriteGroup == null) {
-      super.render(canvas);
-      final paint = Paint()..color = _resolvePlaceholderColor();
-      canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y), paint);
+    if (_spriteGroup != null) {
+      // Rendering is handled by sprite child; avoid placeholder square fallback.
+      return;
     }
+
+    // Fallback placeholder: draw a simple turret representation
+    final paint = Paint()
+      ..color = const Color(0xFFFF8C00)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.fill;
+
+    // Draw base (circle)
+    canvas.drawCircle(Offset(size.x / 2, size.y / 2), size.x / 2.5, paint);
+
+    // Draw barrel (line)
+    final barrelLength = size.x * 0.6;
+    final barrelPaint = Paint()
+      ..color = const Color(0xFF666666)
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(
+      Offset(size.x / 2, size.y / 2),
+      Offset(size.x / 2 + barrelLength, size.y / 2),
+      barrelPaint,
+    );
   }
 
   void _updateAnimationState(PlayerComponent playerRef) {
@@ -81,20 +99,15 @@ class SentryTurret extends BaseEnemy {
     }
   }
 
-  Color _resolvePlaceholderColor() {
-    switch (_animState) {
-      case SentryTurretAnimState.idle:
-        return const Color(0xFFCCCC44);
-      case SentryTurretAnimState.alert:
-        return _animTime % 0.2 < 0.1
-            ? const Color(0xFFFFFF66)
-            : const Color(0xFFFFAA33);
-    }
-  }
-
   Future<void> _tryInitSpriteAnimation() async {
     final image = await _loadTurretSheet();
     if (image == null) {
+      // Fallback: no sprite available, render will be custom placeholder
+      if (kDebugMode) {
+        debugPrint(
+          'SENTRY_TURRET: No sprite sheet available, using placeholder render',
+        );
+      }
       _spriteGroup = null;
       return;
     }

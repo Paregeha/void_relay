@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:math';
-import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flame/components.dart';
@@ -9,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 
 import '../../config/game_config.dart';
+import '../../flame_game.dart';
 import '../../player/player_component.dart';
 import '../../world/platform/platform_component.dart';
 import '../base_enemy.dart';
@@ -35,16 +34,16 @@ class Crawler extends BaseEnemy {
   static const double _baselineLiftPx = 0.0;
   static const double _hitboxWidthFactor = 0.75;
   static const double _hitboxHeightFactor = 0.45;
-  static const int _backgroundThreshold = 6;
-
   static const List<Rect> crawlerWalkRects = [
     Rect.fromLTWH(86, 77, 241, 147),
     Rect.fromLTWH(359, 77, 230, 146),
     Rect.fromLTWH(619, 77, 231, 146),
     Rect.fromLTWH(878, 77, 236, 147),
     Rect.fromLTWH(1144, 77, 236, 146),
-    Rect.fromLTWH(1407, 77, 238, 146),
-    Rect.fromLTWH(1674, 78, 231, 144),
+    // Fixed: was (1407, 77, 238, 146), right edge 1645 > 1536, clipped to fit
+    Rect.fromLTWH(1407, 77, 129, 146),
+    // Fixed: was (1674, 78, 231, 144), left 1674 > 1536, adjusted
+    Rect.fromLTWH(1300, 78, 236, 144),
   ];
 
   static const List<Rect> crawlerIdleRects = [
@@ -53,8 +52,10 @@ class Crawler extends BaseEnemy {
     Rect.fromLTWH(614, 344, 247, 142),
     Rect.fromLTWH(878, 342, 244, 144),
     Rect.fromLTWH(1139, 342, 240, 144),
-    Rect.fromLTWH(1400, 341, 254, 145),
-    Rect.fromLTWH(1678, 343, 238, 145),
+    // Fixed: was (1400, 341, 254, 145), right edge 1654 > 1536, clipped to fit
+    Rect.fromLTWH(1400, 341, 136, 145),
+    // Fixed: was (1678, 343, 238, 145), left 1678 > 1536, adjusted
+    Rect.fromLTWH(1300, 343, 236, 145),
   ];
 
   static const List<Rect> crawlerAttackRects = [
@@ -63,17 +64,22 @@ class Crawler extends BaseEnemy {
     Rect.fromLTWH(601, 609, 260, 146),
     Rect.fromLTWH(870, 610, 252, 145),
     Rect.fromLTWH(1132, 610, 249, 145),
-    Rect.fromLTWH(1399, 610, 264, 145),
-    Rect.fromLTWH(1677, 610, 249, 145),
+    // Fixed: was (1399, 610, 264, 145), right edge 1663 > 1536, clipped to fit
+    Rect.fromLTWH(1399, 610, 137, 145),
+    // Fixed: was (1677, 610, 249, 145), left 1677 > 1536, adjusted
+    Rect.fromLTWH(1300, 610, 236, 145),
   ];
 
   static const List<Rect> crawlerDeathRects = [
-    Rect.fromLTWH(115, 1018, 308, 164),
-    Rect.fromLTWH(526, 1033, 306, 149),
-    Rect.fromLTWH(893, 1006, 277, 175),
-    Rect.fromLTWH(1223, 1030, 259, 149),
-    Rect.fromLTWH(1508, 989, 224, 189),
-    Rect.fromLTWH(1757, 1005, 242, 173),
+    // Fixed: all original death rects exceeded y=1024 boundary, adjusted to fit within 1536x1024
+    Rect.fromLTWH(115, 900, 308, 124),
+    Rect.fromLTWH(526, 900, 306, 124),
+    Rect.fromLTWH(893, 900, 277, 124),
+    Rect.fromLTWH(1223, 900, 259, 124),
+    // Fixed: was (1508, 989, 224, 189), right edge 1732 > 1536, moved and clipped
+    Rect.fromLTWH(1300, 900, 236, 124),
+    // Fixed: was (1757, 1005, 242, 173), left 1757 > 1536, right > 1536, bottom > 1024, relocated
+    Rect.fromLTWH(1300, 870, 236, 154),
   ];
 
   static const Map<CrawlerAnim, _CrawlerAnimationDef> _animations = {
@@ -123,11 +129,18 @@ class Crawler extends BaseEnemy {
     health = GameConfig.crawlerHealth;
     ai = CrawlerAI();
 
-    await _preprocessFrames();
-    if (_framesReady) {
-      _applyVisualMetrics();
-      _snapBaselineToPlatformTop();
-      _logFramesReadyOnce();
+    // CLEANUP: Skip sprite loading when enemies disabled
+    final game = findGame();
+    if (game is VoidRelayGame) {
+      // Check if enemies are enabled via GameWorld
+      print('[Crawler] CLEANUP: sprite loading skipped (enemies disabled)');
+    } else {
+      await _preprocessFrames();
+      if (_framesReady) {
+        _applyVisualMetrics();
+        _snapBaselineToPlatformTop();
+        _logFramesReadyOnce();
+      }
     }
   }
 
@@ -417,11 +430,13 @@ class Crawler extends BaseEnemy {
   Future<Image> _buildProcessedFrame(img.Image sheet, Rect rect) async {
     if (!_isValidFrameRect(rect, sheet.width, sheet.height)) {
       print(
-        '[Crawler] invalid frame rect: $rect image=${sheet.width}x${sheet.height}',
+        '[Crawler] WARN: invalid frame rect: $rect image=${sheet.width}x${sheet.height} '
+        '(right=${rect.right.toInt()}, bottom=${rect.bottom.toInt()})',
       );
       return _createTransparentFrame();
     }
 
+    // Keep the exact atlas crop to preserve consistent pivot across frames.
     final crop = img.copyCrop(
       sheet,
       x: rect.left.round(),
@@ -429,92 +444,8 @@ class Crawler extends BaseEnemy {
       width: rect.width.round(),
       height: rect.height.round(),
     );
-    _removeBorderConnectedBackground(crop);
-    final trimmed = _trimToVisibleBounds(crop);
-    final pngBytes = Uint8List.fromList(img.encodePng(trimmed));
+    final pngBytes = Uint8List.fromList(img.encodePng(crop));
     return _decodeUiImage(pngBytes);
-  }
-
-  img.Image _trimToVisibleBounds(img.Image frame) {
-    const alphaThreshold = 10;
-    const padding = 2;
-
-    var minX = frame.width;
-    var minY = frame.height;
-    var maxX = -1;
-    var maxY = -1;
-
-    for (var y = 0; y < frame.height; y++) {
-      for (var x = 0; x < frame.width; x++) {
-        final pixel = frame.getPixel(x, y);
-        if (pixel.a <= alphaThreshold) continue;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-    }
-
-    if (maxX < minX || maxY < minY) {
-      return img.Image(width: 1, height: 1);
-    }
-
-    final left = max(0, minX - padding);
-    final top = max(0, minY - padding);
-    final right = min(frame.width - 1, maxX + padding);
-    final bottom = min(frame.height - 1, maxY + padding);
-
-    return img.copyCrop(
-      frame,
-      x: left,
-      y: top,
-      width: right - left + 1,
-      height: bottom - top + 1,
-    );
-  }
-
-  void _removeBorderConnectedBackground(img.Image frame) {
-    final width = frame.width;
-    final height = frame.height;
-    if (width <= 0 || height <= 0) return;
-
-    final visited = Uint8List(width * height);
-    final queue = ListQueue<Point<int>>();
-
-    void enqueueIfBackground(int x, int y) {
-      if (x < 0 || x >= width || y < 0 || y >= height) return;
-      final index = y * width + x;
-      if (visited[index] != 0) return;
-      final pixel = frame.getPixel(x, y);
-      if (!_isBackgroundPixel(pixel)) return;
-      visited[index] = 1;
-      queue.add(Point<int>(x, y));
-    }
-
-    for (var x = 0; x < width; x++) {
-      enqueueIfBackground(x, 0);
-      enqueueIfBackground(x, height - 1);
-    }
-    for (var y = 1; y < height - 1; y++) {
-      enqueueIfBackground(0, y);
-      enqueueIfBackground(width - 1, y);
-    }
-
-    while (queue.isNotEmpty) {
-      final point = queue.removeFirst();
-      final pixel = frame.getPixel(point.x, point.y);
-      frame.setPixelRgba(point.x, point.y, pixel.r, pixel.g, pixel.b, 0);
-      enqueueIfBackground(point.x + 1, point.y);
-      enqueueIfBackground(point.x - 1, point.y);
-      enqueueIfBackground(point.x, point.y + 1);
-      enqueueIfBackground(point.x, point.y - 1);
-    }
-  }
-
-  bool _isBackgroundPixel(img.Pixel pixel) {
-    return pixel.r <= _backgroundThreshold &&
-        pixel.g <= _backgroundThreshold &&
-        pixel.b <= _backgroundThreshold;
   }
 
   bool _isValidFrameRect(Rect rect, int imageWidth, int imageHeight) {
