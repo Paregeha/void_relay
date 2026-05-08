@@ -9,6 +9,7 @@ class Room {
   final List<EnemySpawn> enemySpawns;
   final Vector2 roomSize;
   final List<Vector2> coolingStationSpawns;
+  final List<Vector2> heartPickupSpawns;
   final List<Vector2> switchConsoleSpawns;
   final List<Vector2> repairTerminalSpawns;
   final Vector2? relayGatePosition;
@@ -20,6 +21,7 @@ class Room {
     required this.enemySpawns,
     required this.roomSize,
     this.coolingStationSpawns = const [],
+    this.heartPickupSpawns = const [],
     this.switchConsoleSpawns = const [],
     this.repairTerminalSpawns = const [],
     this.relayGatePosition,
@@ -30,6 +32,7 @@ class Room {
 class EnemySpawn {
   final Vector2 position;
   final String type;
+  final String? id;
 
-  EnemySpawn(this.position, {this.type = 'base'});
+  EnemySpawn(this.position, {this.type = 'base', this.id});
 }

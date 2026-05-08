@@ -15,6 +15,10 @@ class ParticleSystem extends Component {
   int _lastHitSparkAtMs = 0;
   int _lastDashTrailAtMs = 0;
   int _lastWarningPulseAtMs = 0;
+  final Paint _pulsePaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.2;
+  final Paint _particlePaint = Paint();
 
   ParticleSystem({int renderPriority = defaultRenderPriority})
     : super(priority: renderPriority);
@@ -91,16 +95,24 @@ class ParticleSystem extends Component {
   void update(double dt) {
     super.update(dt);
 
-    for (final p in _particles) {
+    for (var i = _particles.length - 1; i >= 0; i--) {
+      final p = _particles[i];
       p.life -= dt;
-      p.position += p.velocity * dt;
+      if (p.life <= 0) {
+        _particles.removeAt(i);
+        continue;
+      }
+      p.position.x += p.velocity.x * dt;
+      p.position.y += p.velocity.y * dt;
     }
-    _particles.removeWhere((p) => p.life <= 0);
 
-    for (final pulse in _pulses) {
+    for (var i = _pulses.length - 1; i >= 0; i--) {
+      final pulse = _pulses[i];
       pulse.life -= dt;
+      if (pulse.life <= 0) {
+        _pulses.removeAt(i);
+      }
     }
-    _pulses.removeWhere((p) => p.life <= 0);
   }
 
   @override
@@ -114,18 +126,22 @@ class ParticleSystem extends Component {
       final alpha = (1 - t) * 0.7;
       final color = pulse.color.withValues(alpha: alpha);
 
-      final paint = Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.2;
-
-      canvas.drawCircle(Offset(pulse.center.x, pulse.center.y), radius, paint);
+      _pulsePaint.color = color;
+      canvas.drawCircle(
+        Offset(pulse.center.x, pulse.center.y),
+        radius,
+        _pulsePaint,
+      );
     }
 
     for (final p in _particles) {
       final alpha = (p.life / p.maxLife).clamp(0.0, 1.0);
-      final paint = Paint()..color = p.color.withValues(alpha: alpha);
-      canvas.drawCircle(Offset(p.position.x, p.position.y), p.size, paint);
+      _particlePaint.color = p.color.withValues(alpha: alpha);
+      canvas.drawCircle(
+        Offset(p.position.x, p.position.y),
+        p.size,
+        _particlePaint,
+      );
     }
   }
 }

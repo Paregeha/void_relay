@@ -46,14 +46,11 @@ void main() {
       expect(game.gameWorld!.hasRoomType(RoomType.cooling), isTrue);
       expect(game.gameWorld!.hasRoomType(RoomType.hazard), isFalse);
 
-      // Transition reason/state
-      game.triggerSectorTransition('Relay reached');
+      // Simulate successful exit interaction (opened door + player entered).
+      game.gameWorld!.onSectorComplete?.call('Relay reached');
       await tester.pump();
       expect(game.isTransitionOpen, isTrue);
-      expect(
-        const {'Relay reached', 'Room cleared'}.contains(game.transitionReason),
-        isTrue,
-      );
+      expect(game.transitionReason, 'Relay reached');
 
       // Continue transition to reward, then apply reward to advance.
       game.openRewardStepFromTransition();

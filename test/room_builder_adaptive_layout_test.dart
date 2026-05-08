@@ -60,6 +60,10 @@ void _expectRoomInsideBounds(Vector2 roomSize, Room room) {
     _expectPointInside(position, roomSize, epsilon);
   }
 
+  for (final position in room.heartPickupSpawns) {
+    _expectPointInside(position, roomSize, epsilon);
+  }
+
   for (final position in room.switchConsoleSpawns) {
     _expectPointInside(position, roomSize, epsilon);
   }
@@ -109,6 +113,7 @@ void _expectBottomAnchoredNotBelowFloor(Room room) {
 
   final bottomAnchored = <Vector2>[
     ...room.coolingStationSpawns,
+    ...room.heartPickupSpawns,
     ...room.switchConsoleSpawns,
     ...room.repairTerminalSpawns,
     if (room.relayGatePosition != null) room.relayGatePosition!,

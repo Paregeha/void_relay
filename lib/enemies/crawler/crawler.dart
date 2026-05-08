@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flame/components.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 
@@ -92,7 +93,7 @@ class Crawler extends BaseEnemy {
     ),
     CrawlerAnim.death: _CrawlerAnimationDef(
       frameCount: 6,
-      fps: 10,
+      fps: 20,
       loop: false,
     ),
   };
@@ -126,14 +127,16 @@ class Crawler extends BaseEnemy {
     anchor = Anchor.bottomCenter;
     size = Vector2.zero();
     _hitboxSize = Vector2.zero();
-    health = GameConfig.crawlerHealth;
+    maxHealth = GameConfig.crawlerHealth;
+    health = maxHealth;
     ai = CrawlerAI();
 
     // CLEANUP: Skip sprite loading when enemies disabled
     final game = findGame();
     if (game is VoidRelayGame) {
       // Check if enemies are enabled via GameWorld
-      print('[Crawler] CLEANUP: sprite loading skipped (enemies disabled)');
+      if (false)
+        print('[Crawler] CLEANUP: sprite loading skipped (enemies disabled)');
     } else {
       await _preprocessFrames();
       if (_framesReady) {
@@ -330,14 +333,14 @@ class Crawler extends BaseEnemy {
     if (bytes == null) {
       if (!_didLogAssetFailure) {
         _didLogAssetFailure = true;
-        print('[Crawler] FAILED to load crawler_sheet.png');
+        if (false) print('[Crawler] FAILED to load crawler_sheet.png');
       }
       return;
     }
 
     final sheet = img.decodeImage(bytes);
     if (sheet == null) {
-      print('[Crawler] FAILED to decode crawler_sheet.png');
+      if (false) print('[Crawler] FAILED to decode crawler_sheet.png');
       return;
     }
 
@@ -360,7 +363,7 @@ class Crawler extends BaseEnemy {
 
     _framesReady = _hasUsableProcessedFrames();
     if (!_framesReady) {
-      print('[Crawler] processed frame list is empty');
+      if (false) print('[Crawler] processed frame list is empty');
     }
   }
 
@@ -411,7 +414,7 @@ class Crawler extends BaseEnemy {
       }
       return data.buffer.asUint8List();
     } catch (e) {
-      print('[Crawler] FAILED to load crawler_sheet.png: $e');
+      if (false) print('[Crawler] FAILED to load crawler_sheet.png: $e');
       return null;
     }
   }
@@ -429,10 +432,11 @@ class Crawler extends BaseEnemy {
 
   Future<Image> _buildProcessedFrame(img.Image sheet, Rect rect) async {
     if (!_isValidFrameRect(rect, sheet.width, sheet.height)) {
-      print(
-        '[Crawler] WARN: invalid frame rect: $rect image=${sheet.width}x${sheet.height} '
-        '(right=${rect.right.toInt()}, bottom=${rect.bottom.toInt()})',
-      );
+      if (false)
+        print(
+          '[Crawler] WARN: invalid frame rect: $rect image=${sheet.width}x${sheet.height} '
+          '(right=${rect.right.toInt()}, bottom=${rect.bottom.toInt()})',
+        );
       return _createTransparentFrame();
     }
 
@@ -506,14 +510,15 @@ class Crawler extends BaseEnemy {
 
   void _logFramesReadyOnce() {
     if (_didLogFramesReady || !_framesReady) return;
-    print(
-      '[Crawler] ready '
-      'walk=${_framesByAnim[CrawlerAnim.walk]?.length} '
-      'idle=${_framesByAnim[CrawlerAnim.idle]?.length} '
-      'attack=${_framesByAnim[CrawlerAnim.attack]?.length} '
-      'death=${_framesByAnim[CrawlerAnim.death]?.length} '
-      'size=$size',
-    );
+    if (false)
+      print(
+        '[Crawler] ready '
+        'walk=${_framesByAnim[CrawlerAnim.walk]?.length} '
+        'idle=${_framesByAnim[CrawlerAnim.idle]?.length} '
+        'attack=${_framesByAnim[CrawlerAnim.attack]?.length} '
+        'death=${_framesByAnim[CrawlerAnim.death]?.length} '
+        'size=$size',
+      );
     _didLogFramesReady = true;
   }
 
@@ -529,5 +534,8 @@ class Crawler extends BaseEnemy {
     _animState = CrawlerAnimState.death;
     velocity.setZero();
     _setAnimation(CrawlerAnim.death);
+    if (kDebugMode) {
+      debugPrint('[ANIMATION] death animation speed x2 for crawler');
+    }
   }
 }

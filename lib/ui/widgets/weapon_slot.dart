@@ -30,6 +30,7 @@ class WeaponSlot extends StatelessWidget {
           Text(
             'Active [$activeWeaponSlot]: $activeWeaponName',
             style: const TextStyle(
+              fontFamily: 'Orbitron',
               color: Colors.white,
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -40,12 +41,20 @@ class WeaponSlot extends StatelessWidget {
             secondaryWeaponSlot == null
                 ? 'Secondary: -'
                 : 'Secondary [$secondaryWeaponSlot]: $secondaryWeaponName',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
+            style: const TextStyle(
+              fontFamily: 'Orbitron',
+              color: Colors.white70,
+              fontSize: 11,
+            ),
           ),
           const SizedBox(height: 4),
           const Text(
             'Switch: C/X or 1/2',
-            style: TextStyle(color: Colors.white54, fontSize: 10),
+            style: TextStyle(
+              fontFamily: 'Orbitron',
+              color: Colors.white54,
+              fontSize: 10,
+            ),
           ),
         ],
       ),

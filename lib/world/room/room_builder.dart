@@ -1,6 +1,7 @@
 import 'package:flame/components.dart';
 
 import '../../config/game_config.dart';
+import '../../systems/difficulty_profile.dart';
 import '../platform/platform_component.dart';
 import 'room.dart';
 import 'room_types.dart';
@@ -19,19 +20,70 @@ class RoomBuilder {
       Vector2(GameConfig.defaultWorldWidth, GameConfig.defaultWorldHeight);
 
   /// Returns a room by index. Wraps around when index exceeds known rooms.
-  static Room buildRoom(int index) {
-    return buildRoomForSize(index, _defaultRoomSize);
+  static Room buildRoom(int index, {DifficultyProfile? difficultyProfile}) {
+    return buildRoomForSize(
+      index,
+      _defaultRoomSize,
+      difficultyProfile: difficultyProfile,
+    );
   }
 
   /// Builds a room for a provided size (used by tests and adaptive layouts).
-  static Room buildRoomForSize(int index, Vector2 roomSize) {
+  static Room buildRoomForSize(
+    int index,
+    Vector2 roomSize, {
+    DifficultyProfile? difficultyProfile,
+  }) {
+    late final Room room;
     switch (index % _totalRooms) {
       case 1:
-        return _buildRoom1(roomSize);
+        room = _buildRoom1(roomSize);
+        break;
       case 0:
       default:
-        return _buildRoom0(roomSize);
+        room = _buildRoom0(roomSize);
+        break;
     }
+
+    final profile = difficultyProfile;
+    if (profile == null || profile.platformGapMultiplier <= 1.2) {
+      return room;
+    }
+
+    return _applyPlatformGapProfile(room, profile.platformGapMultiplier);
+  }
+
+  static Room _applyPlatformGapProfile(Room room, double gapMultiplier) {
+    final shrinkFactor = (1.0 / gapMultiplier).clamp(0.82, 1.0);
+    final adjustedPlatforms = <PlatformComponent>[];
+    for (final platform in room.platforms) {
+      final isHorizontal = platform.size.x > platform.size.y;
+      final isFloorLike = platform.size.x >= room.roomSize.x * 0.9;
+      if (!isHorizontal || isFloorLike) {
+        adjustedPlatforms.add(platform);
+        continue;
+      }
+
+      adjustedPlatforms.add(
+        PlatformComponent(
+          position: platform.position.clone(),
+          size: Vector2(platform.size.x * shrinkFactor, platform.size.y),
+        ),
+      );
+    }
+
+    return Room(
+      platforms: adjustedPlatforms,
+      playerSpawn: room.playerSpawn.clone(),
+      enemySpawns: room.enemySpawns,
+      roomSize: room.roomSize.clone(),
+      coolingStationSpawns: room.coolingStationSpawns,
+      heartPickupSpawns: room.heartPickupSpawns,
+      switchConsoleSpawns: room.switchConsoleSpawns,
+      repairTerminalSpawns: room.repairTerminalSpawns,
+      relayGatePosition: room.relayGatePosition,
+      roomTypes: room.roomTypes,
+    );
   }
 
   /// Returns the sector/room number (1-indexed) for display.
@@ -120,13 +172,13 @@ class RoomBuilder {
       platforms: platforms,
       playerSpawn: _playerGroundSpawn(roomSize, 80),
       enemySpawns: [
-        EnemySpawn(_p(roomSize, 520, 404), type: 'crawler'),
+        EnemySpawn(_p(roomSize, 430, 404), type: 'enemy3'),
         EnemySpawn(_p(roomSize, 900, 310), type: 'hover_drone'),
         EnemySpawn(
           _enemyBottomAnchoredOnGround(roomSize, 1580, enemyHeight: 32),
           type: 'sentry_turret',
         ),
-        EnemySpawn(_p(roomSize, 2460, 394), type: 'crawler'),
+        EnemySpawn(_p(roomSize, 2460, 394), type: 'enemy3'),
         EnemySpawn(_p(roomSize, 3020, 320), type: 'hover_drone'),
       ],
       roomSize: roomSize.clone(),
@@ -135,6 +187,10 @@ class RoomBuilder {
         _bottomAnchoredOnPlatform(roomSize, 760, 380),
         _bottomAnchoredOnPlatform(roomSize, 1450, 380),
         _bottomAnchoredOnPlatform(roomSize, 2860, 380),
+      ],
+      heartPickupSpawns: [
+        _bottomAnchoredOnPlatform(roomSize, 1120, 350),
+        _bottomAnchoredOnPlatform(roomSize, 2540, 410),
       ],
       switchConsoleSpawns: [
         _bottomAnchoredOnGround(roomSize, 1240),
@@ -238,14 +294,14 @@ class RoomBuilder {
       platforms: platforms,
       playerSpawn: _playerGroundSpawn(roomSize, 140),
       enemySpawns: [
-        EnemySpawn(_p(roomSize, 560, 404), type: 'crawler'),
+        EnemySpawn(_p(roomSize, 560, 404), type: 'enemy3'),
         EnemySpawn(_p(roomSize, 920, 310), type: 'hover_drone'),
         EnemySpawn(_p(roomSize, 1260, 310), type: 'hover_drone'),
         EnemySpawn(
           _enemyBottomAnchoredOnPlatform(roomSize, 1600, 430, enemyHeight: 32),
           type: 'sentry_turret',
         ),
-        EnemySpawn(_p(roomSize, 2480, 360), type: 'crawler'),
+        EnemySpawn(_p(roomSize, 2480, 360), type: 'enemy3'),
         EnemySpawn(_p(roomSize, 2960, 320), type: 'hover_drone'),
         EnemySpawn(
           _enemyBottomAnchoredOnPlatform(roomSize, 3380, 430, enemyHeight: 32),
@@ -259,6 +315,10 @@ class RoomBuilder {
         _bottomAnchoredOnPlatform(roomSize, 1120, 340),
         _bottomAnchoredOnPlatform(roomSize, 2240, 430),
         _bottomAnchoredOnPlatform(roomSize, 2820, 340),
+      ],
+      heartPickupSpawns: [
+        _bottomAnchoredOnPlatform(roomSize, 820, 380),
+        _bottomAnchoredOnPlatform(roomSize, 2520, 380),
       ],
       switchConsoleSpawns: [
         _bottomAnchoredOnGround(roomSize, 1460),

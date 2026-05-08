@@ -15,6 +15,7 @@ class PlayerController {
   static const LogicalKeyboardKey _prevWeaponKey = LogicalKeyboardKey.keyX;
   static const LogicalKeyboardKey _slot1Key = LogicalKeyboardKey.digit1;
   static const LogicalKeyboardKey _slot2Key = LogicalKeyboardKey.digit2;
+  static const LogicalKeyboardKey _shootKey = LogicalKeyboardKey.keyF;
 
   PlayerController(this.player);
 
@@ -60,16 +61,13 @@ class PlayerController {
     }
     _wasJumpPressed = jumpPressed;
 
-    final dashPressed = HardwareKeyboard.instance.isLogicalKeyPressed(
-      LogicalKeyboardKey.shiftLeft,
-    );
-    player.setSprintHeld(dashPressed);
+    player.setSprintHeld(false);
 
     final nextWeaponPressed = HardwareKeyboard.instance.isLogicalKeyPressed(
       _nextWeaponKey,
     );
     if (nextWeaponPressed && !_wasNextWeaponPressed) {
-      player.weaponManager.switchToNextWeapon();
+      player.switchToNextWeapon();
     }
     _wasNextWeaponPressed = nextWeaponPressed;
 
@@ -77,7 +75,7 @@ class PlayerController {
       _prevWeaponKey,
     );
     if (prevWeaponPressed && !_wasPrevWeaponPressed) {
-      player.weaponManager.switchToPreviousWeapon();
+      player.switchToPreviousWeapon();
     }
     _wasPrevWeaponPressed = prevWeaponPressed;
 
@@ -85,7 +83,7 @@ class PlayerController {
       _slot1Key,
     );
     if (slot1Pressed && !_wasSlot1Pressed) {
-      player.weaponManager.switchToWeaponSlot(0);
+      player.switchToWeaponSlot(0);
     }
     _wasSlot1Pressed = slot1Pressed;
 
@@ -93,12 +91,13 @@ class PlayerController {
       _slot2Key,
     );
     if (slot2Pressed && !_wasSlot2Pressed) {
-      player.weaponManager.switchToWeaponSlot(1);
+      player.switchToWeaponSlot(1);
     }
     _wasSlot2Pressed = slot2Pressed;
 
-    player.weaponManager.setTriggerHeld(
-      HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.keyF),
+    final firePressed = HardwareKeyboard.instance.isLogicalKeyPressed(
+      _shootKey,
     );
+    player.weaponManager.setTriggerHeld(firePressed);
   }
 }

@@ -1,5 +1,5 @@
 class RenderTrace {
-  static const bool enabled = true;
+  static const bool enabled = false;
 
   static int _frameId = 0;
   static int _sequence = 0;
@@ -10,14 +10,14 @@ class RenderTrace {
     if (!enabled) return;
     _frameId++;
     _sequence = 0;
-    print('[RenderSequence] --- frame=$_frameId source=$source ---');
+    if (false) print('[RenderSequence] --- frame=$_frameId source=$source ---');
   }
 
   static void log(String label) {
     if (!enabled) return;
     _sequence++;
     final seq = _sequence.toString().padLeft(3, '0');
-    print('[RenderSequence] $seq $label');
+    if (false) print('[RenderSequence] $seq $label');
   }
 
   static void logCanvas({
@@ -26,9 +26,10 @@ class RenderTrace {
     required String operation,
   }) {
     if (!enabled) return;
-    print(
-      '[CanvasTrace] file=$file method=$method operation=$operation '
-      'frame=$_frameId seq=$_sequence',
-    );
+    if (false)
+      print(
+        '[CanvasTrace] file=$file method=$method operation=$operation '
+        'frame=$_frameId seq=$_sequence',
+      );
   }
 }

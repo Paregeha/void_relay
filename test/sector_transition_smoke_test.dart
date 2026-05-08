@@ -10,6 +10,7 @@ Widget _buildHarness(VoidRelayGame game) {
       game: game,
       overlayBuilderMap: {
         UiManager.hudOverlay: (_, __) => const SizedBox.shrink(),
+        UiManager.rewardOverlay: (_, __) => const SizedBox.shrink(),
         UiManager.pauseOverlay: (_, __) => const SizedBox.shrink(),
         UiManager.gameOverOverlay: (_, __) => const SizedBox.shrink(),
         UiManager.transitionOverlay: (_, __) => const SizedBox.shrink(),

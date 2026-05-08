@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flame/components.dart';
@@ -6,6 +7,7 @@ import '../config/game_config.dart';
 import '../flame_game.dart';
 import '../sound_assets.dart';
 import '../world/game_world.dart';
+import 'save_state_models.dart';
 
 /// Базовий клас для аварійних подій (blackout, toxic gas, door failure).
 abstract class HazardEvent {
@@ -31,6 +33,14 @@ abstract class HazardEvent {
   void markResolved() {
     _isResolved = true;
   }
+
+  double get elapsedTime => _elapsedTime;
+
+  set elapsedTime(double value) {
+    _elapsedTime = value.clamp(0.0, duration);
+  }
+
+  bool get isResolved => _isResolved;
 
   /// Оновлює час активності события.
   void updateTime(double dt) {
@@ -133,7 +143,6 @@ class HazardSystem extends Component {
   // Детерміновані cooldown-таймери без randomness/clock-time.
   double _timeSinceLastBlackout = 9999;
   double _timeSinceLastToxicGas = 9999;
-  double _timeSinceLastSystemBreakdown = 9999;
   double _timeSinceLastDoorFailure = 9999;
 
   int _lastProcessedSectorIndex = -1;
@@ -167,7 +176,6 @@ class HazardSystem extends Component {
 
     _timeSinceLastBlackout += dt;
     _timeSinceLastToxicGas += dt;
-    _timeSinceLastSystemBreakdown += dt;
     _timeSinceLastDoorFailure += dt;
 
     final world = game.gameWorld;
@@ -188,6 +196,8 @@ class HazardSystem extends Component {
     } else if (_currentEvent != null) {
       // Событие завершилось
       _currentEvent!.onEnd();
+      unawaited(game.stopAlarmSound());
+      unawaited(game.restoreGameMusicAfterEvent());
       _completedEventIds.add(_currentEvent!.eventId);
       _currentEvent = null;
       _timeSinceLastEvent = 0;
@@ -205,7 +215,10 @@ class HazardSystem extends Component {
     final world = game.gameWorld;
     if (world == null) return;
 
-    final triggerInterval = _effectiveTriggerInterval(world.sectorRiskLevel);
+    final triggerInterval = _effectiveTriggerInterval(
+      world.sectorRiskLevel,
+      hazardChance: game.difficultyProfile.hazardChance,
+    );
     if (_timeSinceLastEvent >= triggerInterval) {
       _triggerDeterministicEvent(game, world);
     }
@@ -231,18 +244,8 @@ class HazardSystem extends Component {
       candidates.add('DOOR_FAILURE');
     }
 
-    // Priority 2: system breakdown (окрема troubleshooting-ціль)
-    final canTriggerSystemBreakdown =
-        _timeSinceLastSystemBreakdown >= GameConfig.systemBreakdownCooldown;
-    final shouldTriggerSystemBreakdown =
-        normalizedHeat >= GameConfig.systemBreakdownHeatThreshold ||
-        sectorElapsed >= GameConfig.systemBreakdownSectorTimeThreshold;
-    if (canTriggerSystemBreakdown && shouldTriggerSystemBreakdown) {
-      // Separate troubleshooting flow. Keep deterministic priority outside random room-events trio.
-      _startEvent(SystemBreakdownEvent(game: game));
-      _timeSinceLastSystemBreakdown = 0;
-      return;
-    }
+    // Priority 2 (disabled): system breakdown is intentionally removed
+    // from active gameplay hazards.
 
     // Priority 3: toxic gas (heat pressure)
     final canTriggerToxicGas =
@@ -292,13 +295,18 @@ class HazardSystem extends Component {
     }
   }
 
-  double _effectiveTriggerInterval(int sectorRiskLevel) {
+  double _effectiveTriggerInterval(
+    int sectorRiskLevel, {
+    double hazardChance = 0.25,
+  }) {
     final reduced =
         GameConfig.timeBetweenHazardEvents -
         sectorRiskLevel * GameConfig.hazardIntervalReductionPerSector;
-    return reduced < GameConfig.hazardMinInterval
+    final chanceFactor = (1.25 - hazardChance).clamp(0.55, 1.05);
+    final adjusted = reduced * chanceFactor;
+    return adjusted < GameConfig.hazardMinInterval
         ? GameConfig.hazardMinInterval
-        : reduced;
+        : adjusted;
   }
 
   /// Розпочинає конкретне событие.
@@ -311,6 +319,8 @@ class HazardSystem extends Component {
     final game = findGame();
     if (game is VoidRelayGame) {
       game.playSfx(SoundAssets.alert);
+      unawaited(game.playAlarmSound());
+      unawaited(game.duckGameMusicForEvent());
       final pulseCenter = game.gameWorld?.player.absolutePosition;
       if (pulseCenter != null) {
         game.spawnWarningPulse(pulseCenter);
@@ -360,12 +370,7 @@ class HazardSystem extends Component {
 
   /// Ручна активація system breakdown события (для тестування).
   void triggerSystemBreakdown() {
-    if (_currentEvent != null) return;
-    final game = findGame();
-    if (game is VoidRelayGame) {
-      _startEvent(SystemBreakdownEvent(game: game));
-      _timeSinceLastSystemBreakdown = 0;
-    }
+    // Intentionally no-op: SYSTEM_BREAKDOWN is disabled as a gameplay event.
   }
 
   /// Завершити поточний door failure через repair-взаємодію.
@@ -384,14 +389,83 @@ class HazardSystem extends Component {
 
   void reset() {
     _currentEvent?.onEnd();
+    final game = findGame();
+    if (game is VoidRelayGame) {
+      unawaited(game.stopAlarmSound());
+      unawaited(game.restoreGameMusicAfterEvent());
+    }
     _currentEvent = null;
     _timeSinceLastEvent = 0;
     _timeSinceLastBlackout = 9999;
     _timeSinceLastToxicGas = 9999;
-    _timeSinceLastSystemBreakdown = 9999;
     _timeSinceLastDoorFailure = 9999;
     _lastProcessedSectorIndex = -1;
     _doorFailureTriggeredInSector = false;
     _completedEventIds.clear();
+  }
+
+  HazardStateSaveData captureSaveState() {
+    return HazardStateSaveData(
+      activeEventId: _currentEvent?.eventId,
+      activeEventElapsed: _currentEvent?.elapsedTime ?? 0.0,
+      timeSinceLastEvent: _timeSinceLastEvent,
+      timeSinceLastBlackout: _timeSinceLastBlackout,
+      timeSinceLastToxicGas: _timeSinceLastToxicGas,
+      timeSinceLastDoorFailure: _timeSinceLastDoorFailure,
+      lastProcessedSectorIndex: _lastProcessedSectorIndex,
+      doorFailureTriggeredInSector: _doorFailureTriggeredInSector,
+    );
+  }
+
+  void applySaveState(HazardStateSaveData state) {
+    reset();
+    _timeSinceLastEvent = state.timeSinceLastEvent;
+    _timeSinceLastBlackout = state.timeSinceLastBlackout;
+    _timeSinceLastToxicGas = state.timeSinceLastToxicGas;
+    _timeSinceLastDoorFailure = state.timeSinceLastDoorFailure;
+    _lastProcessedSectorIndex = state.lastProcessedSectorIndex;
+    _doorFailureTriggeredInSector = state.doorFailureTriggeredInSector;
+
+    final game = findGame();
+
+    final eventId = state.activeEventId;
+    if (eventId == null || eventId.isEmpty) {
+      if (game is VoidRelayGame) {
+        unawaited(game.stopAlarmSound());
+        unawaited(game.restoreGameMusicAfterEvent());
+      }
+      return;
+    }
+
+    if (game is! VoidRelayGame) {
+      return;
+    }
+
+    HazardEvent? restored;
+    switch (eventId) {
+      case 'BLACKOUT':
+        restored = BlackoutEvent(game: game);
+        break;
+      case 'TOXIC_GAS':
+        restored = ToxicGasEvent(game: game);
+        break;
+      case 'DOOR_FAILURE':
+        restored = DoorFailureEvent(game: game);
+        break;
+      default:
+        restored = null;
+        break;
+    }
+
+    if (restored == null) {
+      return;
+    }
+
+    restored.resetLifecycle();
+    restored.onStart();
+    unawaited(game.playAlarmSound());
+    unawaited(game.duckGameMusicForEvent());
+    restored.elapsedTime = state.activeEventElapsed;
+    _currentEvent = restored;
   }
 }

@@ -3,10 +3,12 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flame/components.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:void_relay/player/player_controller.dart';
 
 import '../config/game_config.dart';
+import '../core/debug/debug_collision_config.dart';
 import '../core/debug/render_trace.dart';
 import '../core/utils/safe_asset_loader.dart';
 import '../flame_game.dart';
@@ -16,6 +18,8 @@ import '../weapons/pulse_blaster.dart';
 import '../weapons/weapon_manager.dart';
 
 enum PlayerAnimState { idle, run, jump, dash, gun, death }
+
+enum WeaponType { autoGun, sniperGun }
 
 enum PlayerLifeState { alive, dying, dead }
 
@@ -75,10 +79,37 @@ class _DebugAnimMeta {
   final _AtlasAnimationBundle? bundle;
 }
 
+class _PlayerVisualData {
+  const _PlayerVisualData({
+    required this.bundles,
+    required this.debugMeta,
+    required this.scaleMultipliers,
+    required this.renderOffsetsLogical,
+  });
+
+  final Map<PlayerAnimState, _AtlasAnimationBundle> bundles;
+  final Map<PlayerAnimState, _DebugAnimMeta> debugMeta;
+  final Map<PlayerAnimState, double> scaleMultipliers;
+  final Map<PlayerAnimState, Offset> renderOffsetsLogical;
+}
+
+class _WeaponAssetPaths {
+  const _WeaponAssetPaths({
+    required this.imagePath,
+    required this.atlasPath,
+    required this.label,
+  });
+
+  final String imagePath;
+  final String atlasPath;
+  final String label;
+}
+
 class _PlayerAnimationRenderer extends PositionComponent {
   final Map<PlayerAnimState, _AtlasAnimationBundle> bundles;
   final Map<PlayerAnimState, _DebugAnimMeta> debugMeta;
   final Map<PlayerAnimState, double> scaleMultipliers;
+  final Map<PlayerAnimState, Offset> renderOffsetsLogical;
   final double desiredVisualHeight;
   final Vector2 parentGameplaySize;
 
@@ -116,6 +147,7 @@ class _PlayerAnimationRenderer extends PositionComponent {
     required this.bundles,
     required this.debugMeta,
     required this.scaleMultipliers,
+    required this.renderOffsetsLogical,
     required this.desiredVisualHeight,
     required this.parentGameplaySize,
   });
@@ -135,6 +167,70 @@ class _PlayerAnimationRenderer extends PositionComponent {
 
   Rect? get lastVisualDestRect => _lastVisualDestRect;
   double? get lastVisibleFeetBottomOnScreen => _lastVisibleFeetBottomOnScreen;
+
+  void _recomputeBundleBaselines() {
+    _bundleBaselines.clear();
+    for (final entry in bundles.entries) {
+      final frames = entry.value.frames;
+      if (frames.isEmpty) continue;
+      final maxBottom = frames
+          .map((f) => f.originalY + f.src.height)
+          .reduce(max);
+      _bundleBaselines[entry.key] = maxBottom;
+    }
+  }
+
+  void replaceVisualData({
+    required Map<PlayerAnimState, _AtlasAnimationBundle> nextBundles,
+    required Map<PlayerAnimState, _DebugAnimMeta> nextDebugMeta,
+    required Map<PlayerAnimState, double> nextScaleMultipliers,
+    required Map<PlayerAnimState, Offset> nextRenderOffsetsLogical,
+    required PlayerAnimState preferredState,
+  }) {
+    final previousState = currentState;
+    final previousBundle = bundles[previousState];
+    final previousLen = previousBundle?.frames.length ?? 0;
+    final progressRatio = previousLen > 1
+        ? currentFrameIndex / (previousLen - 1)
+        : 0.0;
+
+    bundles
+      ..clear()
+      ..addAll(nextBundles);
+    debugMeta
+      ..clear()
+      ..addAll(nextDebugMeta);
+    scaleMultipliers
+      ..clear()
+      ..addAll(nextScaleMultipliers);
+    renderOffsetsLogical
+      ..clear()
+      ..addAll(nextRenderOffsetsLogical);
+    _recomputeBundleBaselines();
+
+    final targetState = bundles.containsKey(previousState)
+        ? previousState
+        : preferredState;
+    currentState = targetState;
+
+    final newLen = bundles[targetState]?.frames.length ?? 0;
+    if (newLen <= 1) {
+      currentFrameIndex = 0;
+    } else {
+      currentFrameIndex = (progressRatio * (newLen - 1)).round().clamp(
+        0,
+        newLen - 1,
+      );
+    }
+
+    _frameTimer = 0.0;
+    animTimer = 0.0;
+    lastLoggedFrame = -1;
+    lastLogTime = 0.0;
+    _lastRenderedListIndex = -1;
+    _advancesThisUpdate = 0;
+    _didLogDeathHoldLast = false;
+  }
 
   Rect buildFullGridSourceRect(_AtlasFrameDef frame) {
     return Rect.fromLTWH(
@@ -159,68 +255,72 @@ class _PlayerAnimationRenderer extends PositionComponent {
     position = Vector2(parentGameplaySize.x / 2, parentGameplaySize.y);
 
     if (PlayerComponent.debugAnimationLogs) {
-      print(
-        '[PlayerBaseline] renderer position=['
-        '${position.x.toInt()},${position.y.toInt()}] '
-        'anchor=bottomCenter '
-        'size=[${size.x.toInt()},${size.y.toInt()}]',
-      );
-      print(
-        '[PlayerVisual] rendererSize=[${size.x.toInt()},${size.y.toInt()}]',
-      );
-      print(
-        '[PlayerVisual] rendererPos=[${position.x.toInt()},${position.y.toInt()}]',
-      );
-      print('[PlayerVisual] anchor=bottomCenter');
-      print(
-        '[PlayerVisual] playerHitbox=[${parentGameplaySize.x.toInt()},${parentGameplaySize.y.toInt()}]',
-      );
+      if (false)
+        print(
+          '[PlayerBaseline] renderer position=['
+          '${position.x.toInt()},${position.y.toInt()}] '
+          'anchor=bottomCenter '
+          'size=[${size.x.toInt()},${size.y.toInt()}]',
+        );
+      if (false)
+        print(
+          '[PlayerVisual] rendererSize=[${size.x.toInt()},${size.y.toInt()}]',
+        );
+      if (false)
+        print(
+          '[PlayerVisual] rendererPos=[${position.x.toInt()},${position.y.toInt()}]',
+        );
+      if (false) print('[PlayerVisual] anchor=bottomCenter');
+      if (false)
+        print(
+          '[PlayerVisual] playerHitbox=[${parentGameplaySize.x.toInt()},${parentGameplaySize.y.toInt()}]',
+        );
     }
 
     // Compute max bottom-Y per animation bundle (for baseline correction)
-    for (final entry in bundles.entries) {
-      final frames = entry.value.frames;
-      if (frames.isEmpty) continue;
-      final maxBottom = frames
-          .map((f) => f.originalY + f.src.height)
-          .reduce(max);
-      _bundleBaselines[entry.key] = maxBottom;
+    _recomputeBundleBaselines();
+    for (final entry in _bundleBaselines.entries) {
       final corrY =
-          (_AtlasAnimationBundle.logicalFrameHeight - maxBottom) * _atlasScale;
+          (_AtlasAnimationBundle.logicalFrameHeight - entry.value) *
+          _atlasScale;
       if (PlayerComponent._debugRunAtlas &&
           !PlayerComponent.debugIdleTwoFramesOnly) {
-        print(
-          '[PlayerAtlas] baseline ${entry.key.name}: '
-          'animationBaselineY=${maxBottom.toInt()} '
-          'baselineCorrectionY=${corrY.toStringAsFixed(1)}',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas] baseline ${entry.key.name}: '
+            'animationBaselineY=${entry.value.toInt()} '
+            'baselineCorrectionY=${corrY.toStringAsFixed(1)}',
+          );
       }
     }
 
     if (PlayerComponent._debugRunAtlas &&
         !PlayerComponent.debugIdleTwoFramesOnly) {
-      print(
-        '[PlayerAtlas] visual component: '
-        'size=$size position=$position anchor=$anchor '
-        'parentGameplaySize=32x64',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] visual component: '
+          'size=$size position=$position anchor=$anchor '
+          'parentGameplaySize=32x64',
+        );
     }
 
     if (PlayerComponent._debugRunAtlas &&
         !PlayerComponent.debugIdleTwoFramesOnly) {
       // ── STARTUP: Show all animation stepTimes ──────────────────────────────
-      print('[PlayerAtlas] TIMING_CONFIG: All animation stepTimes:');
+      if (false) print('[PlayerAtlas] TIMING_CONFIG: All animation stepTimes:');
       for (final entry in debugMeta.entries) {
         final state = entry.key;
         final meta = entry.value;
-        print(
-          '[PlayerAtlas]   ${state.name.padRight(8)} stepTime=${meta.stepTime.toStringAsFixed(4)} '
-          'loop=${meta.loop} frames=${meta.bundle?.frames.length ?? 0}',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas]   ${state.name.padRight(8)} stepTime=${meta.stepTime.toStringAsFixed(4)} '
+            'loop=${meta.loop} frames=${meta.bundle?.frames.length ?? 0}',
+          );
       }
-      print(
-        '[PlayerAtlas] TIMING_CONFIG: Use - (minus) to slow down, + (plus) to speed up, Home to reset',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] TIMING_CONFIG: Use - (minus) to slow down, + (plus) to speed up, Home to reset',
+        );
     }
 
     // ── ATLAS FORMAT: Verify compressed bbox vs full grid ────────────────────
@@ -228,7 +328,7 @@ class _PlayerAnimationRenderer extends PositionComponent {
         PlayerComponent.debugIdleTwoFramesOnly) {
       return;
     }
-    print('[PlayerAtlas] ATLAS_FORMAT_CHECK:');
+    if (false) print('[PlayerAtlas] ATLAS_FORMAT_CHECK:');
     for (final entry in bundles.entries) {
       final state = entry.key;
       final bundle = entry.value;
@@ -260,14 +360,15 @@ class _PlayerAnimationRenderer extends PositionComponent {
       final actualX = f.src.left.toInt();
       final actualY = f.src.top.toInt();
 
-      print(
-        '[PlayerAtlas]   ${state.name}: ${isCompressed ? "COMPRESSED_BBOX" : "FULL_GRID_ATLAS"} (checked all frames)\n'
-        '    frameIndex=${f.frameIndex} row=${f.row} col=${f.col}\n'
-        '    expectedGrid=(${expectedGridX},${expectedGridY})\n'
-        '    actualPacked=(${actualX},${actualY})\n'
-        '    tight_bbox=(${f.src.width.toInt()}x${f.src.height.toInt()})\n'
-        '    logicalOffset=(${f.originalX.toInt()},${f.originalY.toInt()})',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas]   ${state.name}: ${isCompressed ? "COMPRESSED_BBOX" : "FULL_GRID_ATLAS"} (checked all frames)\n'
+          '    frameIndex=${f.frameIndex} row=${f.row} col=${f.col}\n'
+          '    expectedGrid=(${expectedGridX},${expectedGridY})\n'
+          '    actualPacked=(${actualX},${actualY})\n'
+          '    tight_bbox=(${f.src.width.toInt()}x${f.src.height.toInt()})\n'
+          '    logicalOffset=(${f.originalX.toInt()},${f.originalY.toInt()})',
+        );
     }
 
     // ── STARTUP FRAME DUMP: verify atlas src-coords for every bundle ──────
@@ -277,18 +378,20 @@ class _PlayerAnimationRenderer extends PositionComponent {
       final b = entry.value;
       if (b.frames.isEmpty) continue;
       final imageName = b.imagePath.split('/').last;
-      print(
-        '[PlayerAtlas] FRAME_DUMP state=${state.name} '
-        'image=$imageName frames=${b.frames.length}',
-      );
-      for (final f in b.frames) {
+      if (false)
         print(
-          '[PlayerAtlas]   listIdx=${b.frames.indexOf(f)} '
-          'frameIndex=${f.frameIndex} row=${f.row} col=${f.col} '
-          'src=(${f.src.left.toInt()},${f.src.top.toInt()},'
-          '${f.src.width.toInt()}x${f.src.height.toInt()}) '
-          'orig=(${f.originalX.toInt()},${f.originalY.toInt()})',
+          '[PlayerAtlas] FRAME_DUMP state=${state.name} '
+          'image=$imageName frames=${b.frames.length}',
         );
+      for (final f in b.frames) {
+        if (false)
+          print(
+            '[PlayerAtlas]   listIdx=${b.frames.indexOf(f)} '
+            'frameIndex=${f.frameIndex} row=${f.row} col=${f.col} '
+            'src=(${f.src.left.toInt()},${f.src.top.toInt()},'
+            '${f.src.width.toInt()}x${f.src.height.toInt()}) '
+            'orig=(${f.originalX.toInt()},${f.originalY.toInt()})',
+          );
       }
     }
   }
@@ -345,13 +448,14 @@ class _PlayerAnimationRenderer extends PositionComponent {
     final effectiveStepTime = meta?.stepTime ?? 0.0;
     if (!PlayerComponent.debugIdleTwoFramesOnly &&
         PlayerComponent.debugAnimationLogs) {
-      print(
-        '[PlayerAtlas] STATE_SWITCH → ${state.name} '
-        'stepTime=${effectiveStepTime.toStringAsFixed(4)} '
-        'frames=${bundles[state]?.frames.length ?? 0}',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] STATE_SWITCH → ${state.name} '
+          'stepTime=${effectiveStepTime.toStringAsFixed(4)} '
+          'frames=${bundles[state]?.frames.length ?? 0}',
+        );
       if (state == PlayerAnimState.death) {
-        print('[PlayerAnim] DEATH_START frameIndex=0');
+        if (false) print('[PlayerAnim] DEATH_START frameIndex=0');
       }
     }
   }
@@ -410,7 +514,8 @@ class _PlayerAnimationRenderer extends PositionComponent {
             !_didLogDeathHoldLast) {
           _didLogDeathHoldLast = true;
           final holdFrame = bundle.frames[currentFrameIndex].frameIndex;
-          print('[PlayerAnim] DEATH_HOLD_LAST frameIndex=$holdFrame');
+          if (false)
+            print('[PlayerAnim] DEATH_HOLD_LAST frameIndex=$holdFrame');
         }
       }
 
@@ -430,14 +535,18 @@ class _PlayerAnimationRenderer extends PositionComponent {
           PlayerComponent.debugAnimationLogs &&
           currentFrameIndex != prevIndex) {
         final frameDef = bundle.frames[currentFrameIndex];
-        print(
-          '[PlayerAtlas] FRAME_ADVANCE anim=${currentState.name} '
-          'listIndex=$currentFrameIndex '
-          'frameIndex=${frameDef.frameIndex} '
-          'row=${frameDef.row} col=${frameDef.col}',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas] FRAME_ADVANCE anim=${currentState.name} '
+            'listIndex=$currentFrameIndex '
+            'frameIndex=${frameDef.frameIndex} '
+            'row=${frameDef.row} col=${frameDef.col}',
+          );
         if (currentState == PlayerAnimState.death) {
-          print('[PlayerDeath] DEATH_FRAME frameIndex=${frameDef.frameIndex}');
+          if (false)
+            print(
+              '[PlayerDeath] DEATH_FRAME frameIndex=${frameDef.frameIndex}',
+            );
         }
       }
     }
@@ -448,13 +557,14 @@ class _PlayerAnimationRenderer extends PositionComponent {
     if (!PlayerComponent.debugIdleTwoFramesOnly &&
         PlayerComponent.debugAnimationLogs &&
         _advancesThisUpdate > 0) {
-      print(
-        '[PlayerAtlas] TIMING anim=${currentState.name} '
-        'dt=${dt.toStringAsFixed(4)} frameTimer=${_frameTimer.toStringAsFixed(4)} '
-        'stepTime=${effectiveStepTime.toStringAsFixed(4)} '
-        'advancesThisUpdate=$_advancesThisUpdate '
-        '(multiplier=${_debugTimingMultiplier.toStringAsFixed(2)})',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] TIMING anim=${currentState.name} '
+          'dt=${dt.toStringAsFixed(4)} frameTimer=${_frameTimer.toStringAsFixed(4)} '
+          'stepTime=${effectiveStepTime.toStringAsFixed(4)} '
+          'advancesThisUpdate=$_advancesThisUpdate '
+          '(multiplier=${_debugTimingMultiplier.toStringAsFixed(2)})',
+        );
     }
 
     // Periodic status log every 2 s (snapshot, does not affect playback)
@@ -477,9 +587,10 @@ class _PlayerAnimationRenderer extends PositionComponent {
         PlayerComponent.debugPlayerRenderLogs;
 
     if (PlayerComponent.debugTraceRenderSequence && shouldLog) {
-      RenderTrace.log(
-        '_PlayerAnimationRenderer.render START priority=$priority',
-      );
+      if (false)
+        RenderTrace.log(
+          '_PlayerAnimationRenderer.render START priority=$priority',
+        );
     }
 
     final parentPlayer = parent is PlayerComponent
@@ -492,10 +603,11 @@ class _PlayerAnimationRenderer extends PositionComponent {
     }
     _playerRenderCallsThisFrame++;
     if (shouldLog) {
-      print(
-        '[RenderTrace] _PlayerAnimationRenderer render call count this frame = '
-        '$_playerRenderCallsThisFrame',
-      );
+      if (false)
+        print(
+          '[RenderTrace] _PlayerAnimationRenderer render call count this frame = '
+          '$_playerRenderCallsThisFrame',
+        );
     }
 
     // ── Single source of truth: currentFrameIndex is the list index ──────
@@ -538,6 +650,10 @@ class _PlayerAnimationRenderer extends PositionComponent {
     final frameScale = renderHeight / logicalFrameHeight;
     final visibleBottomCorrectionY =
         (logicalFrameHeight - frameVisibleBottomY) * frameScale;
+    final logicalRenderOffset =
+        renderOffsetsLogical[currentState] ?? Offset.zero;
+    final normalizedOffsetX = logicalRenderOffset.dx * frameScale;
+    final normalizedOffsetY = logicalRenderOffset.dy * frameScale;
     final groundOffset = currentState == PlayerAnimState.death
         ? PlayerComponent.deathVisualGroundOffsetY
         : PlayerComponent.visualGroundOffsetY;
@@ -545,10 +661,17 @@ class _PlayerAnimationRenderer extends PositionComponent {
         size.y - renderHeight + visibleBottomCorrectionY + groundOffset;
 
     final destRect = useFullGridCell
-        ? Rect.fromLTWH(centeredX, bottomAlignedY, renderWidth, renderHeight)
+        ? Rect.fromLTWH(
+            centeredX + normalizedOffsetX,
+            bottomAlignedY + normalizedOffsetY,
+            renderWidth,
+            renderHeight,
+          )
         : Rect.fromLTWH(
-            frameDef.originalX * _atlasScale,
-            frameDef.originalY * _atlasScale + baselineCorrY,
+            frameDef.originalX * _atlasScale + normalizedOffsetX,
+            frameDef.originalY * _atlasScale +
+                baselineCorrY +
+                normalizedOffsetY,
             frameDef.src.width * _atlasScale,
             frameDef.src.height * _atlasScale,
           );
@@ -568,28 +691,42 @@ class _PlayerAnimationRenderer extends PositionComponent {
     final centerX = size.x / 2.0;
     final centerY = size.y / 2.0;
     if (shouldLog) {
-      print(
-        '[PlayerFacing] render facingRight=$_facingRight '
-        'isFlipped=$isFlipped center=(${centerX.toInt()},${centerY.toInt()})',
-      );
+      if (false)
+        print(
+          '[PlayerFacing] render facingRight=$_facingRight '
+          'isFlipped=$isFlipped center=(${centerX.toInt()},${centerY.toInt()})',
+        );
     }
 
     if (shouldLog) {
-      print('[RenderTrace] PlayerRenderer START');
-      print('[RenderTrace] parentPos=${parentPlayer?.position ?? "unknown"}');
-      print('[RenderTrace] rendererPos=$position');
-      print('[RenderTrace] rendererSize=$size');
-      print('[RenderTrace] anchor=$anchor');
-      print('[RenderTrace] priority=$priority');
-      print('[RenderTrace] anim=${currentState.name}');
-      print('[RenderTrace] listIndex=$listIndex');
-      print('[RenderTrace] frameIndex=${frameDef.frameIndex}');
-      print('[RenderTrace] sourceRect=$sourceRect');
-      print('[RenderTrace] destRect=$destRect');
-      print(
-        '[RenderTrace] baselineCorrectionY=${baselineCorrY.toStringAsFixed(3)}',
-      );
-      print('[RenderTrace] isFlipped=$isFlipped');
+      final renderWeapon = bundle.imagePath.contains('_sniper_gun')
+          ? 'sniperGun'
+          : 'autoGun';
+      if (false) print('[RenderTrace] PlayerRenderer START');
+      if (false)
+        print(
+          '[PlayerRenderNormalize] weapon=$renderWeapon anim=${currentState.name} '
+          'sourceFrame=${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()} '
+          'visualSize=${renderWidth.toStringAsFixed(2)}x${renderHeight.toStringAsFixed(2)} '
+          'offset=(${normalizedOffsetX.toStringAsFixed(2)},${normalizedOffsetY.toStringAsFixed(2)}) '
+          'destRect=$destRect',
+        );
+      if (false)
+        print('[RenderTrace] parentPos=${parentPlayer?.position ?? "unknown"}');
+      if (false) print('[RenderTrace] rendererPos=$position');
+      if (false) print('[RenderTrace] rendererSize=$size');
+      if (false) print('[RenderTrace] anchor=$anchor');
+      if (false) print('[RenderTrace] priority=$priority');
+      if (false) print('[RenderTrace] anim=${currentState.name}');
+      if (false) print('[RenderTrace] listIndex=$listIndex');
+      if (false) print('[RenderTrace] frameIndex=${frameDef.frameIndex}');
+      if (false) print('[RenderTrace] sourceRect=$sourceRect');
+      if (false) print('[RenderTrace] destRect=$destRect');
+      if (false)
+        print(
+          '[RenderTrace] baselineCorrectionY=${baselineCorrY.toStringAsFixed(3)}',
+        );
+      if (false) print('[RenderTrace] isFlipped=$isFlipped');
     }
 
     if (listIndex != _lastRenderedListIndex) {
@@ -597,59 +734,69 @@ class _PlayerAnimationRenderer extends PositionComponent {
 
       if (useFullGridCell && PlayerComponent.debugAnimationLogs) {
         if (currentState == PlayerAnimState.death) {
+          if (false)
+            print(
+              '[PlayerDeath] frameIndex=${frameDef.frameIndex} row=${frameDef.row} col=${frameDef.col} '
+              'sourceRect=(${sourceRect.left.toInt()},${sourceRect.top.toInt()},${sourceRect.width.toInt()}x${sourceRect.height.toInt()})',
+            );
+          if (false)
+            print(
+              '[PlayerDeath] frameIndex=${frameDef.frameIndex} '
+              'visibleBottomY=${frameVisibleBottomY.toStringAsFixed(0)} '
+              'correctionY=${visibleBottomCorrectionY.toStringAsFixed(2)} '
+              'deathOffsetY=${PlayerComponent.deathVisualGroundOffsetY.toStringAsFixed(2)} '
+              'destRect=(${destRect.left.toStringAsFixed(2)},${destRect.top.toStringAsFixed(2)},${destRect.width.toStringAsFixed(2)}x${destRect.height.toStringAsFixed(2)}) '
+              'visibleFeetBottomOnScreen=${visibleFeetBottomOnScreen.toStringAsFixed(2)}',
+            );
+        }
+        if (false)
           print(
-            '[PlayerDeath] frameIndex=${frameDef.frameIndex} row=${frameDef.row} col=${frameDef.col} '
+            '[PlayerFullGrid] anim=${currentState.name} frameIndex=${frameDef.frameIndex} '
+            'row=${frameDef.row} col=${frameDef.col} '
+            'sourceRect=(${sourceRect.left.toInt()},${sourceRect.top.toInt()},${sourceRect.width.toInt()}x${sourceRect.height.toInt()}) '
+            'destRect=(${destRect.left.toInt()},${destRect.top.toInt()},${destRect.width.toInt()}x${destRect.height.toInt()})',
+          );
+        if (false)
+          print(
+            '[PlayerAnim] STATE ${currentState.name} frameIndex=${frameDef.frameIndex} '
+            'row=${frameDef.row} col=${frameDef.col} '
             'sourceRect=(${sourceRect.left.toInt()},${sourceRect.top.toInt()},${sourceRect.width.toInt()}x${sourceRect.height.toInt()})',
           );
+        if (false)
           print(
-            '[PlayerDeath] frameIndex=${frameDef.frameIndex} '
-            'visibleBottomY=${frameVisibleBottomY.toStringAsFixed(0)} '
-            'correctionY=${visibleBottomCorrectionY.toStringAsFixed(2)} '
-            'deathOffsetY=${PlayerComponent.deathVisualGroundOffsetY.toStringAsFixed(2)} '
-            'destRect=(${destRect.left.toStringAsFixed(2)},${destRect.top.toStringAsFixed(2)},${destRect.width.toStringAsFixed(2)}x${destRect.height.toStringAsFixed(2)}) '
-            'visibleFeetBottomOnScreen=${visibleFeetBottomOnScreen.toStringAsFixed(2)}',
+            '[PlayerScaleNormalize] anim=${currentState.name} '
+            'frameIndex=${frameDef.frameIndex} '
+            'multiplier=${animScaleMultiplier.toStringAsFixed(2)} '
+            'destRect=(${destRect.left.toInt()},${destRect.top.toInt()},${destRect.width.toInt()}x${destRect.height.toInt()})',
           );
-        }
-        print(
-          '[PlayerFullGrid] anim=${currentState.name} frameIndex=${frameDef.frameIndex} '
-          'row=${frameDef.row} col=${frameDef.col} '
-          'sourceRect=(${sourceRect.left.toInt()},${sourceRect.top.toInt()},${sourceRect.width.toInt()}x${sourceRect.height.toInt()}) '
-          'destRect=(${destRect.left.toInt()},${destRect.top.toInt()},${destRect.width.toInt()}x${destRect.height.toInt()})',
-        );
-        print(
-          '[PlayerAnim] STATE ${currentState.name} frameIndex=${frameDef.frameIndex} '
-          'row=${frameDef.row} col=${frameDef.col} '
-          'sourceRect=(${sourceRect.left.toInt()},${sourceRect.top.toInt()},${sourceRect.width.toInt()}x${sourceRect.height.toInt()})',
-        );
-        print(
-          '[PlayerScaleNormalize] anim=${currentState.name} '
-          'frameIndex=${frameDef.frameIndex} '
-          'multiplier=${animScaleMultiplier.toStringAsFixed(2)} '
-          'destRect=(${destRect.left.toInt()},${destRect.top.toInt()},${destRect.width.toInt()}x${destRect.height.toInt()})',
-        );
-        print(
-          '[PlayerFeetLock] anim=${currentState.name} frameIndex=${frameDef.frameIndex} '
-          'originalY=${frameDef.originalY.toStringAsFixed(0)} '
-          'height=${frameDef.src.height.toStringAsFixed(0)} '
-          'visibleBottomY=${frameVisibleBottomY.toStringAsFixed(0)} '
-          'correctionY=${visibleBottomCorrectionY.toStringAsFixed(2)}',
-        );
-        print(
-          '[PlayerFeetLock] destRect.top=${destRect.top.toStringAsFixed(2)} '
-          'destRect.bottom=${destRect.bottom.toStringAsFixed(2)}',
-        );
-        print(
-          '[PlayerFeetLock] expectedFeetBottom=${(size.y + PlayerComponent.visualGroundOffsetY).toStringAsFixed(2)}',
-        );
-        print(
-          '[PlayerFeetLock] visibleFeetBottomOnScreen=${visibleFeetBottomOnScreen.toStringAsFixed(2)}',
-        );
-        print(
-          '[PlayerBaseline] anim=${currentState.name} '
-          'multiplier=${animScaleMultiplier.toStringAsFixed(2)} '
-          'destRect=(${destRect.left.toStringAsFixed(2)},${destRect.top.toStringAsFixed(2)},${destRect.width.toStringAsFixed(2)}x${destRect.height.toStringAsFixed(2)}) '
-          'bottom=${destRect.bottom.toStringAsFixed(2)}',
-        );
+        if (false)
+          print(
+            '[PlayerFeetLock] anim=${currentState.name} frameIndex=${frameDef.frameIndex} '
+            'originalY=${frameDef.originalY.toStringAsFixed(0)} '
+            'height=${frameDef.src.height.toStringAsFixed(0)} '
+            'visibleBottomY=${frameVisibleBottomY.toStringAsFixed(0)} '
+            'correctionY=${visibleBottomCorrectionY.toStringAsFixed(2)}',
+          );
+        if (false)
+          print(
+            '[PlayerFeetLock] destRect.top=${destRect.top.toStringAsFixed(2)} '
+            'destRect.bottom=${destRect.bottom.toStringAsFixed(2)}',
+          );
+        if (false)
+          print(
+            '[PlayerFeetLock] expectedFeetBottom=${(size.y + PlayerComponent.visualGroundOffsetY).toStringAsFixed(2)}',
+          );
+        if (false)
+          print(
+            '[PlayerFeetLock] visibleFeetBottomOnScreen=${visibleFeetBottomOnScreen.toStringAsFixed(2)}',
+          );
+        if (false)
+          print(
+            '[PlayerBaseline] anim=${currentState.name} '
+            'multiplier=${animScaleMultiplier.toStringAsFixed(2)} '
+            'destRect=(${destRect.left.toStringAsFixed(2)},${destRect.top.toStringAsFixed(2)},${destRect.width.toStringAsFixed(2)}x${destRect.height.toStringAsFixed(2)}) '
+            'bottom=${destRect.bottom.toStringAsFixed(2)}',
+          );
       }
 
       // ── RENDER log: fires on every frame change (not every render call) ──
@@ -659,11 +806,12 @@ class _PlayerAnimationRenderer extends PositionComponent {
       } else {
         final imageName = bundle.imagePath.split('/').last;
 
-        print(
-          '[PlayerAtlas] RENDER anim=${currentState.name} image=$imageName '
-          'listIndex=$listIndex frameIndex=${frameDef.frameIndex} '
-          'row=${frameDef.row} col=${frameDef.col}',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas] RENDER anim=${currentState.name} image=$imageName '
+            'listIndex=$listIndex frameIndex=${frameDef.frameIndex} '
+            'row=${frameDef.row} col=${frameDef.col}',
+          );
 
         // ── COMPRESSED BBOX ATLAS ANALYSIS ────────────────────────────────────
         // Determines if atlas uses compressed tight bboxes or full grid layout.
@@ -681,19 +829,21 @@ class _PlayerAnimationRenderer extends PositionComponent {
         final isCompressedAtlas =
             actualX != expectedGridX || actualY != expectedGridY;
 
-        print(
-          '[PlayerAtlas] ATLAS_ANALYSIS: ${isCompressedAtlas ? "COMPRESSED_BBOX" : "FULL_GRID"}\n'
-          '  packedSrc=(${actualX},${actualY},${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()})\n'
-          '  logicalOffset=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()})\n'
-          '  gridWouldBe=(${expectedGridX},${expectedGridY})',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas] ATLAS_ANALYSIS: ${isCompressedAtlas ? "COMPRESSED_BBOX" : "FULL_GRID"}\n'
+            '  packedSrc=(${actualX},${actualY},${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()})\n'
+            '  logicalOffset=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()})\n'
+            '  gridWouldBe=(${expectedGridX},${expectedGridY})',
+          );
 
-        print(
-          '[PlayerAtlas] COORDINATES '
-          'src=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()},'
-          '${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
-          'dst=(${destX.toInt()},${destY.toInt()},${destW.toInt()}x${destH.toInt()})',
-        );
+        if (false)
+          print(
+            '[PlayerAtlas] COORDINATES '
+            'src=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()},'
+            '${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
+            'dst=(${destX.toInt()},${destY.toInt()},${destW.toInt()}x${destH.toInt()})',
+          );
 
         // ── DEBUG CROP INFO ─────────────────────────────────────────────────────
         // Detailed frame analysis for diagnosing crop/render issues.
@@ -720,17 +870,18 @@ class _PlayerAnimationRenderer extends PositionComponent {
               logicalRightBottom.dx <= 768 &&
               logicalRightBottom.dy <= 448;
 
-          print(
-            '[PlayerAtlasCropDebug] DETAILED listIndex=$listIndex frameIndex=${frameDef.frameIndex}\n'
-            '  src: LTWH=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()},${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
-            'LTRB=(${srcLeftTop.dx.toInt()},${srcLeftTop.dy.toInt()},${srcRightBottom.dx.toInt()},${srcRightBottom.dy.toInt()})\n'
-            '  logical: orig=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()}) '
-            'LTRB=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()},${logicalRightBottom.dx.toInt()},${logicalRightBottom.dy.toInt()})\n'
-            '  runtime: dst=(${destX.toInt()},${destY.toInt()},${destW.toInt()}x${destH.toInt()}) '
-            'LTRB=(${destX.toInt()},${destY.toInt()},${runtimeRightBottom.dx.toInt()},${runtimeRightBottom.dy.toInt()})\n'
-            '  baseline: value=${_bundleBaselines[currentState]?.toStringAsFixed(1) ?? "?"} corrY=${(_bundleBaselines[currentState] != null ? ((_AtlasAnimationBundle.logicalFrameHeight - _bundleBaselines[currentState]!) * _atlasScale).toStringAsFixed(2) : "?")}\n'
-            '  sourceOK=$sourceOK logicalOK=$logicalOK scale=${_atlasScale.toStringAsFixed(2)}',
-          );
+          if (false)
+            print(
+              '[PlayerAtlasCropDebug] DETAILED listIndex=$listIndex frameIndex=${frameDef.frameIndex}\n'
+              '  src: LTWH=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()},${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
+              'LTRB=(${srcLeftTop.dx.toInt()},${srcLeftTop.dy.toInt()},${srcRightBottom.dx.toInt()},${srcRightBottom.dy.toInt()})\n'
+              '  logical: orig=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()}) '
+              'LTRB=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()},${logicalRightBottom.dx.toInt()},${logicalRightBottom.dy.toInt()})\n'
+              '  runtime: dst=(${destX.toInt()},${destY.toInt()},${destW.toInt()}x${destH.toInt()}) '
+              'LTRB=(${destX.toInt()},${destY.toInt()},${runtimeRightBottom.dx.toInt()},${runtimeRightBottom.dy.toInt()})\n'
+              '  baseline: value=${_bundleBaselines[currentState]?.toStringAsFixed(1) ?? "?"} corrY=${(_bundleBaselines[currentState] != null ? ((_AtlasAnimationBundle.logicalFrameHeight - _bundleBaselines[currentState]!) * _atlasScale).toStringAsFixed(2) : "?")}\n'
+              '  sourceOK=$sourceOK logicalOK=$logicalOK scale=${_atlasScale.toStringAsFixed(2)}',
+            );
         }
       }
     }
@@ -743,48 +894,88 @@ class _PlayerAnimationRenderer extends PositionComponent {
       // ── Facing left: flip horizontally around the component center ────────
       // Use defensive try-finally to ensure canvas.restore() is always called
       if (shouldLog) {
-        print('[RenderTrace] before canvas.save()');
-        RenderTrace.logCanvas(
-          file: 'lib/player/player_component.dart',
-          method: '_PlayerAnimationRenderer.render',
-          operation: 'save',
-        );
+        if (false) print('[RenderTrace] before canvas.save()');
+        if (false)
+          RenderTrace.logCanvas(
+            file: 'lib/player/player_component.dart',
+            method: '_PlayerAnimationRenderer.render',
+            operation: 'save',
+          );
       }
       _canvasSaveCalled = true;
       canvas.save();
       try {
         if (shouldLog) {
-          print('[RenderTrace] before canvas.translate(centerX, centerY)');
-          RenderTrace.logCanvas(
-            file: 'lib/player/player_component.dart',
-            method: '_PlayerAnimationRenderer.render',
-            operation: 'translate',
-          );
+          if (false)
+            print('[RenderTrace] before canvas.translate(centerX, centerY)');
+          if (false)
+            RenderTrace.logCanvas(
+              file: 'lib/player/player_component.dart',
+              method: '_PlayerAnimationRenderer.render',
+              operation: 'translate',
+            );
         }
         canvas.translate(centerX, centerY);
 
         if (shouldLog) {
-          print('[RenderTrace] before canvas.scale(-1.0, 1.0)');
-          RenderTrace.logCanvas(
-            file: 'lib/player/player_component.dart',
-            method: '_PlayerAnimationRenderer.render',
-            operation: 'scale',
-          );
+          if (false) print('[RenderTrace] before canvas.scale(-1.0, 1.0)');
+          if (false)
+            RenderTrace.logCanvas(
+              file: 'lib/player/player_component.dart',
+              method: '_PlayerAnimationRenderer.render',
+              operation: 'scale',
+            );
         }
         canvas.scale(-1.0, 1.0);
 
         if (shouldLog) {
-          print('[RenderTrace] before canvas.translate(-centerX, -centerY)');
-          RenderTrace.logCanvas(
-            file: 'lib/player/player_component.dart',
-            method: '_PlayerAnimationRenderer.render',
-            operation: 'translate',
-          );
+          if (false)
+            print('[RenderTrace] before canvas.translate(-centerX, -centerY)');
+          if (false)
+            RenderTrace.logCanvas(
+              file: 'lib/player/player_component.dart',
+              method: '_PlayerAnimationRenderer.render',
+              operation: 'translate',
+            );
         }
         canvas.translate(-centerX, -centerY);
 
         if (shouldLog) {
           final imageName = bundle.imagePath.split('/').last;
+          if (false)
+            print(
+              '[RenderTrace] drawImageRect BEFORE image=$imageName '
+              'sourceLTRB=${sourceRect.left.toStringAsFixed(1)},${sourceRect.top.toStringAsFixed(1)},${sourceRect.right.toStringAsFixed(1)},${sourceRect.bottom.toStringAsFixed(1)} '
+              'destLTRB=${destRect.left.toStringAsFixed(1)},${destRect.top.toStringAsFixed(1)},${destRect.right.toStringAsFixed(1)},${destRect.bottom.toStringAsFixed(1)} '
+              'sourceWH=${sourceRect.width.toStringAsFixed(1)}x${sourceRect.height.toStringAsFixed(1)} '
+              'destWH=${destRect.width.toStringAsFixed(1)}x${destRect.height.toStringAsFixed(1)}',
+            );
+          if (false)
+            print('[RenderTrace] before drawImageRect (flipped branch)');
+        }
+        canvas.drawImageRect(bundle.image, sourceRect, destRect, paint);
+        if (shouldLog)
+          if (false)
+            print('[RenderTrace] after drawImageRect (flipped branch)');
+      } finally {
+        if (shouldLog) {
+          if (false) print('[RenderTrace] before canvas.restore()');
+          if (false)
+            RenderTrace.logCanvas(
+              file: 'lib/player/player_component.dart',
+              method: '_PlayerAnimationRenderer.render',
+              operation: 'restore',
+            );
+        }
+        _canvasRestoreCalled = true;
+        canvas.restore();
+        if (shouldLog) if (false) print('[RenderTrace] after canvas.restore()');
+      }
+    } else {
+      // ── Facing right: draw directly, no transform needed ─────────────────
+      if (shouldLog) {
+        final imageName = bundle.imagePath.split('/').last;
+        if (false)
           print(
             '[RenderTrace] drawImageRect BEFORE image=$imageName '
             'sourceLTRB=${sourceRect.left.toStringAsFixed(1)},${sourceRect.top.toStringAsFixed(1)},${sourceRect.right.toStringAsFixed(1)},${sourceRect.bottom.toStringAsFixed(1)} '
@@ -792,44 +983,17 @@ class _PlayerAnimationRenderer extends PositionComponent {
             'sourceWH=${sourceRect.width.toStringAsFixed(1)}x${sourceRect.height.toStringAsFixed(1)} '
             'destWH=${destRect.width.toStringAsFixed(1)}x${destRect.height.toStringAsFixed(1)}',
           );
-          print('[RenderTrace] before drawImageRect (flipped branch)');
-        }
-        canvas.drawImageRect(bundle.image, sourceRect, destRect, paint);
-        if (shouldLog)
-          print('[RenderTrace] after drawImageRect (flipped branch)');
-      } finally {
-        if (shouldLog) {
-          print('[RenderTrace] before canvas.restore()');
-          RenderTrace.logCanvas(
-            file: 'lib/player/player_component.dart',
-            method: '_PlayerAnimationRenderer.render',
-            operation: 'restore',
-          );
-        }
-        _canvasRestoreCalled = true;
-        canvas.restore();
-        if (shouldLog) print('[RenderTrace] after canvas.restore()');
-      }
-    } else {
-      // ── Facing right: draw directly, no transform needed ─────────────────
-      if (shouldLog) {
-        final imageName = bundle.imagePath.split('/').last;
-        print(
-          '[RenderTrace] drawImageRect BEFORE image=$imageName '
-          'sourceLTRB=${sourceRect.left.toStringAsFixed(1)},${sourceRect.top.toStringAsFixed(1)},${sourceRect.right.toStringAsFixed(1)},${sourceRect.bottom.toStringAsFixed(1)} '
-          'destLTRB=${destRect.left.toStringAsFixed(1)},${destRect.top.toStringAsFixed(1)},${destRect.right.toStringAsFixed(1)},${destRect.bottom.toStringAsFixed(1)} '
-          'sourceWH=${sourceRect.width.toStringAsFixed(1)}x${sourceRect.height.toStringAsFixed(1)} '
-          'destWH=${destRect.width.toStringAsFixed(1)}x${destRect.height.toStringAsFixed(1)}',
-        );
-        print('[RenderTrace] before drawImageRect (normal branch)');
+        if (false) print('[RenderTrace] before drawImageRect (normal branch)');
       }
       canvas.drawImageRect(bundle.image, sourceRect, destRect, paint);
-      if (shouldLog) print('[RenderTrace] after drawImageRect (normal branch)');
+      if (shouldLog)
+        if (false) print('[RenderTrace] after drawImageRect (normal branch)');
     }
 
     if (shouldLog) {
-      print('[RenderTrace] canvasSaveCalled=$_canvasSaveCalled');
-      print('[RenderTrace] canvasRestoreCalled=$_canvasRestoreCalled');
+      if (false) print('[RenderTrace] canvasSaveCalled=$_canvasSaveCalled');
+      if (false)
+        print('[RenderTrace] canvasRestoreCalled=$_canvasRestoreCalled');
     }
 
     if (PlayerComponent.debugDrawPlayerRenderBounds) {
@@ -847,7 +1011,7 @@ class _PlayerAnimationRenderer extends PositionComponent {
     );
 
     if (PlayerComponent.debugTraceRenderSequence && shouldLog) {
-      RenderTrace.log('_PlayerAnimationRenderer.render END');
+      if (false) RenderTrace.log('_PlayerAnimationRenderer.render END');
     }
   }
 
@@ -891,11 +1055,12 @@ class _PlayerAnimationRenderer extends PositionComponent {
     );
 
     if (!PlayerComponent.debugIdleTwoFramesOnly) {
-      print(
-        '[RenderTrace] debugBounds container=$containerRect destRect=$destRect '
-        'hitbox=$hitboxRect baselineY=${baselineY.toStringAsFixed(2)} '
-        'baselineCorrectionY=${baselineCorrY.toStringAsFixed(2)}',
-      );
+      if (false)
+        print(
+          '[RenderTrace] debugBounds container=$containerRect destRect=$destRect '
+          'hitbox=$hitboxRect baselineY=${baselineY.toStringAsFixed(2)} '
+          'baselineCorrectionY=${baselineCorrY.toStringAsFixed(2)}',
+        );
     }
   }
 
@@ -979,17 +1144,18 @@ class _PlayerAnimationRenderer extends PositionComponent {
     final listIndex = currentFrameIndex.clamp(0, bundle.frames.length - 1);
     final frameDef = bundle.frames[listIndex];
 
-    print(
-      '[PlayerAtlas] STATUS anim=${currentState.name} '
-      'listIndex=$listIndex/${bundle.frames.length - 1} '
-      'frameIndex=${frameDef.frameIndex} '
-      'src=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()}, '
-      '${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
-      'orig=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()}) '
-      'row=${frameDef.row} col=${frameDef.col} '
-      'scale=${_atlasScale.toStringAsFixed(2)} '
-      'visualSize=${visualSize.x.toInt()}x${visualSize.y.toInt()}',
-    );
+    if (false)
+      print(
+        '[PlayerAtlas] STATUS anim=${currentState.name} '
+        'listIndex=$listIndex/${bundle.frames.length - 1} '
+        'frameIndex=${frameDef.frameIndex} '
+        'src=(${frameDef.src.left.toInt()},${frameDef.src.top.toInt()}, '
+        '${frameDef.src.width.toInt()}x${frameDef.src.height.toInt()}) '
+        'orig=(${frameDef.originalX.toInt()},${frameDef.originalY.toInt()}) '
+        'row=${frameDef.row} col=${frameDef.col} '
+        'scale=${_atlasScale.toStringAsFixed(2)} '
+        'visualSize=${visualSize.x.toInt()}x${visualSize.y.toInt()}',
+      );
   }
 }
 
@@ -997,22 +1163,7 @@ class PlayerComponent extends PositionComponent {
   // ── CLEANUP: ONLY Player animations loaded ──
   // Enemies rendering completely disabled (enableEnemies = false in GameWorld)
 
-  static const String _playerRunSheetPath =
-      'assets/sprites/player/player_run_auto_gun.png';
-  static const String _playerRunAtlasPath =
-      'assets/sprites/player/player_run_auto_gun_atlas.json';
-  static const String _playerIdleSheetPath =
-      'assets/sprites/player/player_idle_auto_gun.png';
-  static const String _playerIdleAtlasPath =
-      'assets/sprites/player/player_idle_auto_gun_atlas.json';
-  static const String _playerJumpSheetPath =
-      'assets/sprites/player/player_jump_auto_gun.png';
-  static const String _playerJumpAtlasPath =
-      'assets/sprites/player/player_jump_auto_gun_atlas.json';
-  static const String _playerDeathSheetPath =
-      'assets/sprites/player/player_death_auto_gun.png';
-  static const String _playerDeathAtlasPath =
-      'assets/sprites/player/player_death_auto_gun_atlas.json';
+  static const String _playerAtlasAssetsRoot = 'assets/sprites/player';
 
   static const bool _debugRunAtlas = false;
 
@@ -1027,7 +1178,7 @@ class PlayerComponent extends PositionComponent {
   static const bool debugManualRunAutoGunFrames = false;
 
   /// CLEANUP: Set false to hide weapon entirely during Player animation testing.
-  static const bool enableWeaponSystem = false;
+  static const bool enableWeaponSystem = true;
 
   /// Debug: force player to always face right (disable horizontal flip)
   static const bool debugForceFacingRight = false;
@@ -1035,6 +1186,8 @@ class PlayerComponent extends PositionComponent {
   static const double playerLogicalFrameWidth = 768.0;
   static const double playerLogicalFrameHeight = 448.0;
   static const double playerDesiredVisualHeight = 84.0;
+  // Smaller stepTime => faster frame cycling for run animation.
+  static const double runAnimationStepTime = 0.045;
 
   /// Extra offset for bottom-aligned drawing inside 168x98 visual container.
   static const double visualGroundOffsetY = 0.0;
@@ -1044,6 +1197,12 @@ class PlayerComponent extends PositionComponent {
   static const double? jumpVisualMultiplierOverride = 1.35;
   static const double deathVisualMultiplier = 1.65;
   static const double deathVisualGroundOffsetY = 0.0;
+
+  // Sniper-only visual calibration (render only, no physics changes)
+  static const double sniperRenderScale = 1.08;
+  static const double sniperRunRenderScale = 0.95;
+  static const double sniperRenderOffsetXLogical = -5.0;
+  static const double sniperRenderOffsetYLogical = 0.0;
 
   /// Logs physical-vs-visual grounding diagnostics.
   static const bool debugGroundAlignmentLogs = false;
@@ -1063,17 +1222,29 @@ class PlayerComponent extends PositionComponent {
   static const bool debugPlayerRenderLogs = false;
   static const bool debugAnimationLogs = false;
   static const bool debugRenderOrderLogs = false;
+  static const bool debugWeaponSwitchLogs = true;
+
+  static const Map<WeaponType, Offset> _manualWeaponRenderOffsetsLogical = {
+    WeaponType.autoGun: Offset.zero,
+    WeaponType.sniperGun: Offset(
+      sniperRenderOffsetXLogical,
+      sniperRenderOffsetYLogical,
+    ),
+  };
 
   /// Debug: visual overlay for collision debugging (hitbox + bottom line).
-  static const bool debugDrawCollision = false;
+  static const bool debugDrawCollision =
+      DebugCollisionConfig.showCollisionBoxes &&
+      DebugCollisionConfig.showPlayerHitbox;
 
   /// Debug force-anim keys (no conflicts with PlayerController):
   ///   I = force idle   R = force run   J = force jump
   ///   K = force death  (D is NOT used — D moves player right in PlayerController)
   ///   P = pause/resume animation  (Space is NOT used — Space jumps)
   ///   [ / ] = prev / next frame   Esc / C = clear forced state
-  static const bool enableForceAnimKeys = true;
-  static const bool enableDeathDebugHotkey = true;
+  static const bool enableForceAnimKeys = kDebugMode;
+  static const bool enableDeathDebugHotkey = kDebugMode;
+  static const bool enableWeaponDebugHotkeys = kDebugMode;
 
   // Hysteresis thresholds to prevent idle/run flicker.
   // velocity.x is set directly (no decay), so these just guard against
@@ -1101,6 +1272,40 @@ class PlayerComponent extends PositionComponent {
   bool _isMovementInputActive = false;
   bool _facingRight = true;
   bool _deathDebugKeyPrev = false;
+  WeaponType currentWeapon = WeaponType.autoGun;
+  final Map<String, _AtlasAnimationBundle?> _animationBundleCache = {};
+  final Set<int> _prevWeaponHotkeyIds = {};
+  int _weaponSwitchVersion = 0;
+  double? _referenceIdleMaxBboxHeight;
+  double? _referenceBodyCenterX;
+  Rect? _previousWorldRect;
+
+  Rect get worldHitboxRect {
+    final p = absolutePosition;
+    final hitboxWidth = size.x;
+    final hitboxHeight = size.y;
+    final centerX = p.x + (0.5 - anchor.x) * size.x;
+    final feetY = p.y + (1 - anchor.y) * size.y;
+    return Rect.fromLTWH(
+      centerX - hitboxWidth / 2,
+      feetY - hitboxHeight,
+      hitboxWidth,
+      hitboxHeight,
+    );
+  }
+
+  Rect get previousWorldRect => _previousWorldRect ?? toRect();
+
+  Rect get _localHitboxRect {
+    final hitboxWidth = size.x;
+    final hitboxHeight = size.y;
+    return Rect.fromLTWH(
+      size.x / 2 - hitboxWidth / 2,
+      size.y - hitboxHeight,
+      hitboxWidth,
+      hitboxHeight,
+    );
+  }
 
   _PlayerAnimationRenderer? _animationRenderer;
   PlayerAnimState? _forcedAnimState; // when set, overrides resolved anim state
@@ -1142,6 +1347,8 @@ class PlayerComponent extends PositionComponent {
 
   @override
   void update(double dt) {
+    // Keep last frame world rect for swept collision (important on lag spikes).
+    _previousWorldRect = toRect();
     _debugRenderFrameMarker++;
     super.update(dt);
     _animTime += dt;
@@ -1178,8 +1385,6 @@ class PlayerComponent extends PositionComponent {
     }
 
     _updateAnimationState();
-    _checkDeathDebugHotkey();
-    _checkForceAnimKeys(); // debug force-anim controls
     _syncSpriteVisual();
     _logGroundDebug();
 
@@ -1202,18 +1407,96 @@ class PlayerComponent extends PositionComponent {
       _animForcePaused = false;
       _animationRenderer?.setPaused(false);
       _animationRenderer?.setAnimationState(PlayerAnimState.death);
-      print('[PlayerDeath] STATE_SWITCH -> death (debug key K)');
+      if (false) print('[PlayerDeath] STATE_SWITCH -> death (debug key K)');
     }
     _deathDebugKeyPrev = pressed;
+  }
+
+  void _checkWeaponHotkeys() {
+    if (!enableWeaponDebugHotkeys || debugManualFrameMode) return;
+
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed
+        .map((k) => k.keyId)
+        .toSet();
+    bool justPressed(LogicalKeyboardKey key) =>
+        pressed.contains(key.keyId) &&
+        !_prevWeaponHotkeyIds.contains(key.keyId);
+
+    if (justPressed(LogicalKeyboardKey.digit1)) {
+      setWeapon(WeaponType.autoGun);
+    }
+    if (justPressed(LogicalKeyboardKey.digit2)) {
+      setWeapon(WeaponType.sniperGun);
+    }
+
+    _prevWeaponHotkeyIds
+      ..clear()
+      ..addAll(pressed);
+  }
+
+  void setWeapon(WeaponType weapon) {
+    if (weapon == currentWeapon) {
+      if (false) print('[PlayerWeapon] unchanged weapon=${weapon.name}');
+      return;
+    }
+
+    final previous = currentWeapon;
+    final visualState = _resolveVisualAnimState();
+    currentWeapon = weapon;
+    final version = ++_weaponSwitchVersion;
+
+    if (false)
+      print(
+        '[PlayerWeapon] changed ${previous.name} -> ${weapon.name} '
+        'state=${visualState.name}',
+      );
+
+    if (enableWeaponSystem) {
+      final slot = weapon == WeaponType.autoGun ? 0 : 1;
+      weaponManager.switchToWeaponSlot(slot);
+    }
+
+    // ignore: discarded_futures
+    _refreshWeaponVisuals(version: version, visualState: visualState);
+  }
+
+  void switchToNextWeapon() {
+    if (!enableWeaponSystem) return;
+    final next = currentWeapon == WeaponType.autoGun
+        ? WeaponType.sniperGun
+        : WeaponType.autoGun;
+    setWeapon(next);
+  }
+
+  void switchToPreviousWeapon() {
+    if (!enableWeaponSystem) return;
+    final previous = currentWeapon == WeaponType.autoGun
+        ? WeaponType.sniperGun
+        : WeaponType.autoGun;
+    setWeapon(previous);
+  }
+
+  void switchToWeaponSlot(int slot) {
+    if (!enableWeaponSystem) return;
+    if (slot == 0) {
+      setWeapon(WeaponType.autoGun);
+      return;
+    }
+    if (slot == 1) {
+      setWeapon(WeaponType.sniperGun);
+      return;
+    }
+    weaponManager.switchToWeaponSlot(slot);
   }
 
   @override
   void render(Canvas canvas) {
     if (debugTraceRenderSequence) {
-      RenderTrace.log(
-        'PlayerComponent.render START priority=$priority '
-        'rendererLoaded=${_animationRenderer != null} children=${children.length}',
-      );
+      if (false)
+        RenderTrace.log(
+          'PlayerComponent.render START priority=$priority '
+          'rendererLoaded=${_animationRenderer != null} children=${children.length}',
+        );
     }
 
     // NOTE: children are rendered by Flame's renderTree flow.
@@ -1223,17 +1506,19 @@ class PlayerComponent extends PositionComponent {
     // Only draw placeholder if atlas renderer failed to load
     if (_animationRenderer == null) {
       if (!debugIdleTwoFramesOnly && debugPlayerRenderLogs) {
-        print(
-          '[RenderTrace] PlayerComponent fallback placeholder render ACTIVE',
-        );
+        if (false)
+          print(
+            '[RenderTrace] PlayerComponent fallback placeholder render ACTIVE',
+          );
       }
       final paint = Paint()..color = _resolvePlaceholderColor();
       canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y), paint);
     } else {
       if (!debugIdleTwoFramesOnly && debugPlayerRenderLogs) {
-        print(
-          '[RenderTrace] PlayerComponent fallback placeholder render SKIPPED',
-        );
+        if (false)
+          print(
+            '[RenderTrace] PlayerComponent fallback placeholder render SKIPPED',
+          );
       }
     }
 
@@ -1246,12 +1531,12 @@ class PlayerComponent extends PositionComponent {
         ..color = const Color(0xFFFFFF00)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
-      final hitboxRect = Rect.fromLTWH(0, 0, size.x, size.y);
+      final hitboxRect = _localHitboxRect;
       final bottomY = hitboxRect.bottom;
       canvas.drawRect(hitboxRect, hitboxPaint);
       canvas.drawLine(
-        Offset(0, bottomY),
-        Offset(size.x, bottomY),
+        Offset(hitboxRect.left, bottomY),
+        Offset(hitboxRect.right, bottomY),
         bottomLinePaint,
       );
     }
@@ -1260,7 +1545,7 @@ class PlayerComponent extends PositionComponent {
     // _renderWeapon(canvas);
 
     if (debugTraceRenderSequence) {
-      RenderTrace.log('PlayerComponent.render END');
+      if (false) RenderTrace.log('PlayerComponent.render END');
     }
   }
 
@@ -1284,10 +1569,16 @@ class PlayerComponent extends PositionComponent {
     if (_facingRight == value) return;
     _facingRight = value;
     if (debugPlayerRenderLogs) {
-      print(
-        '[PlayerFacing] direction changed: ${_facingRight ? 'right' : 'left'}',
-      );
+      if (false)
+        print(
+          '[PlayerFacing] direction changed: ${_facingRight ? 'right' : 'left'}',
+        );
     }
+  }
+
+  void restoreFacingDirection(int direction) {
+    facingDirection = direction >= 0 ? 1 : -1;
+    _setFacingRight(facingDirection > 0);
   }
 
   double get _horizontalSpeed =>
@@ -1341,7 +1632,15 @@ class PlayerComponent extends PositionComponent {
 
   bool get isInvulnerable => _invulnerabilityTimer > 0;
 
+  double heal(double amount) {
+    if (amount <= 0 || !isAlive) return 0;
+    final previous = health;
+    health = (health + amount).clamp(0.0, maxHealth).toDouble();
+    return health - previous;
+  }
+
   void takeDamage(double amount) {
+    if (GameConfig.playerGodMode) return;
     if (!isAlive || isInvulnerable) return;
     health -= amount;
     if (health <= 0) {
@@ -1390,7 +1689,10 @@ class PlayerComponent extends PositionComponent {
     }
 
     if (_animState != previous && debugAnimationLogs) {
-      print('[PlayerAnim] STATE_SWITCH ${previous.name} -> ${_animState.name}');
+      if (false)
+        print(
+          '[PlayerAnim] STATE_SWITCH ${previous.name} -> ${_animState.name}',
+        );
     }
   }
 
@@ -1433,7 +1735,7 @@ class PlayerComponent extends PositionComponent {
       _animationRenderer?.setPaused(true);
       _animationRenderer?.setAnimationState(PlayerAnimState.idle);
       _animationRenderer?.jumpToFrameIndexValue(frameIndex);
-      print('[IdleDebug] key=$label -> frameIndex=$frameIndex');
+      if (false) print('[IdleDebug] key=$label -> frameIndex=$frameIndex');
     }
 
     // Keep manual frame stepping available during full-grid validation.
@@ -1455,15 +1757,15 @@ class PlayerComponent extends PositionComponent {
       if (justPressed(LogicalKeyboardKey.space)) {
         _animForcePaused = !_animForcePaused;
         _animationRenderer?.setPaused(_animForcePaused);
-        print('[IdleDebug] key=Space -> paused=$_animForcePaused');
+        if (false) print('[IdleDebug] key=Space -> paused=$_animForcePaused');
       }
       if (justPressed(LogicalKeyboardKey.bracketLeft)) {
         _animationRenderer?.previousFrame();
-        print('[IdleDebug] key=[ -> prev frame');
+        if (false) print('[IdleDebug] key=[ -> prev frame');
       }
       if (justPressed(LogicalKeyboardKey.bracketRight)) {
         _animationRenderer?.nextFrame();
-        print('[IdleDebug] key=] -> next frame');
+        if (false) print('[IdleDebug] key=] -> next frame');
       }
     }
 
@@ -1487,43 +1789,44 @@ class PlayerComponent extends PositionComponent {
     //   Esc / C = clear forced state
     if (justPressed(LogicalKeyboardKey.keyI)) {
       _forcedAnimState = PlayerAnimState.idle;
-      print('[PlayerAtlas] FORCE: idle (I)');
+      if (false) print('[PlayerAtlas] FORCE: idle (I)');
     }
     if (justPressed(LogicalKeyboardKey.keyR)) {
       _forcedAnimState = PlayerAnimState.run;
-      print('[PlayerAtlas] FORCE: run (R)');
+      if (false) print('[PlayerAtlas] FORCE: run (R)');
     }
     if (justPressed(LogicalKeyboardKey.keyJ)) {
       _forcedAnimState = PlayerAnimState.jump;
-      print('[PlayerAtlas] FORCE: jump (J)');
+      if (false) print('[PlayerAtlas] FORCE: jump (J)');
     }
     // K = force death  (was D — D conflicts with moveRight!)
     if (justPressed(LogicalKeyboardKey.keyK)) {
       _forcedAnimState = PlayerAnimState.death;
-      print(
-        '[PlayerAtlas] FORCE: death (K) — note: D was remapped, D=moveRight',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] FORCE: death (K) — note: D was remapped, D=moveRight',
+        );
     }
     // Clear forced state
     if (justPressed(LogicalKeyboardKey.escape) ||
         justPressed(LogicalKeyboardKey.keyC)) {
       _forcedAnimState = null;
-      print('[PlayerAtlas] FORCE: cleared → auto-state');
+      if (false) print('[PlayerAtlas] FORCE: cleared → auto-state');
     }
     // P = pause/resume animation  (was Space — Space conflicts with jump!)
     if (justPressed(LogicalKeyboardKey.keyP)) {
       _animForcePaused = !_animForcePaused;
       _animationRenderer?.setPaused(_animForcePaused);
-      print('[PlayerAtlas] FORCE: paused=$_animForcePaused (P)');
+      if (false) print('[PlayerAtlas] FORCE: paused=$_animForcePaused (P)');
     }
     // Frame stepping: [ = previous, ] = next
     if (justPressed(LogicalKeyboardKey.bracketLeft)) {
       _animationRenderer?.previousFrame();
-      print('[PlayerAtlas] FORCE: prevFrame ([)');
+      if (false) print('[PlayerAtlas] FORCE: prevFrame ([)');
     }
     if (justPressed(LogicalKeyboardKey.bracketRight)) {
       _animationRenderer?.nextFrame();
-      print('[PlayerAtlas] FORCE: nextFrame (])');
+      if (false) print('[PlayerAtlas] FORCE: nextFrame (])');
     }
 
     // ── DEBUG: Animation speed control ────────────────────────────────────
@@ -1532,41 +1835,44 @@ class PlayerComponent extends PositionComponent {
     if (!handledFrameHotkey && justPressed(LogicalKeyboardKey.minus)) {
       _animationRenderer?._debugTimingMultiplier *= 0.8;
       final mult = _animationRenderer?._debugTimingMultiplier ?? 1.0;
-      print(
-        '[PlayerAtlas] TIMING: slower (multiplier=${mult.toStringAsFixed(2)})',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] TIMING: slower (multiplier=${mult.toStringAsFixed(2)})',
+        );
     }
     if (!handledFrameHotkey && justPressed(LogicalKeyboardKey.equal)) {
       // "equal" key is "+/=" in US keyboard layout
       _animationRenderer?._debugTimingMultiplier *= 1.25;
       final mult = _animationRenderer?._debugTimingMultiplier ?? 1.0;
-      print(
-        '[PlayerAtlas] TIMING: faster (multiplier=${mult.toStringAsFixed(2)})',
-      );
+      if (false)
+        print(
+          '[PlayerAtlas] TIMING: faster (multiplier=${mult.toStringAsFixed(2)})',
+        );
     }
     // Home = reset to 1.0x
     if (justPressed(LogicalKeyboardKey.home)) {
       _animationRenderer?._debugTimingMultiplier = 1.0;
-      print('[PlayerAtlas] TIMING: reset to 1.0x');
+      if (false) print('[PlayerAtlas] TIMING: reset to 1.0x');
     }
 
     // ── DEBUG: Crop/render overlay toggle (F1-F4) ────────────────────────────
     // F1 = off, F2 = frame info, F3 = bounds check, F4 = full atlas overlay
     if (justPressed(LogicalKeyboardKey.f1)) {
       _animationRenderer?._debugOverlayMode = 0;
-      print('[PlayerAtlas] DEBUG: overlay off');
+      if (false) print('[PlayerAtlas] DEBUG: overlay off');
     }
     if (justPressed(LogicalKeyboardKey.f2)) {
       _animationRenderer?._debugOverlayMode = 1;
-      print('[PlayerAtlas] DEBUG: showing frame info');
+      if (false) print('[PlayerAtlas] DEBUG: showing frame info');
     }
     if (justPressed(LogicalKeyboardKey.f3)) {
       _animationRenderer?._debugOverlayMode = 2;
-      print('[PlayerAtlas] DEBUG: showing bounds checks');
+      if (false) print('[PlayerAtlas] DEBUG: showing bounds checks');
     }
     if (justPressed(LogicalKeyboardKey.f4)) {
       _animationRenderer?._debugOverlayMode = 3;
-      print('[PlayerAtlas] DEBUG: showing full atlas with sourceRect');
+      if (false)
+        print('[PlayerAtlas] DEBUG: showing full atlas with sourceRect');
     }
 
     _prevPressedKeyIds
@@ -1621,19 +1927,23 @@ class PlayerComponent extends PositionComponent {
     final visualDest = _animationRenderer?.lastVisualDestRect;
     final visualFeetBottom = _animationRenderer?.lastVisibleFeetBottomOnScreen;
     final animName = _resolveVisualAnimState().name;
-    print('[GroundDebug] playerPos=$position');
-    print('[GroundDebug] playerSize=$size');
-    print('[GroundDebug] playerBottom=${playerBottom.toStringAsFixed(2)}');
-    print(
-      '[GroundDebug] platformTop=${platformTop?.toStringAsFixed(2) ?? "n/a"}',
-    );
-    print('[GroundDebug] velocityY=${velocity.y.toStringAsFixed(2)}');
-    print('[GroundDebug] grounded=$isOnGround');
-    print('[GroundDebug] currentAnim=$animName');
-    print('[GroundDebug] visualDestRect=${visualDest ?? "n/a"}');
-    print(
-      '[GroundDebug] visualFeetBottom=${visualFeetBottom?.toStringAsFixed(2) ?? "n/a"}',
-    );
+    if (false) print('[GroundDebug] playerPos=$position');
+    if (false) print('[GroundDebug] playerSize=$size');
+    if (false)
+      print('[GroundDebug] playerBottom=${playerBottom.toStringAsFixed(2)}');
+    if (false)
+      print(
+        '[GroundDebug] platformTop=${platformTop?.toStringAsFixed(2) ?? "n/a"}',
+      );
+    if (false)
+      print('[GroundDebug] velocityY=${velocity.y.toStringAsFixed(2)}');
+    if (false) print('[GroundDebug] grounded=$isOnGround');
+    if (false) print('[GroundDebug] currentAnim=$animName');
+    if (false) print('[GroundDebug] visualDestRect=${visualDest ?? "n/a"}');
+    if (false)
+      print(
+        '[GroundDebug] visualFeetBottom=${visualFeetBottom?.toStringAsFixed(2) ?? "n/a"}',
+      );
   }
 
   // ── Weapon render ─────────────────────────────────────────────────────────
@@ -1669,277 +1979,145 @@ class PlayerComponent extends PositionComponent {
   // ── Sprite visual layer ───────────────────────────────────────────────────
 
   Future<void> _tryInitSpriteVisual() async {
-    // Load all Player animations: run, idle, jump, death
+    final visualData = await _buildVisualDataForWeapon(currentWeapon);
+    if (visualData == null) {
+      _animationRenderer = null;
+      return;
+    }
+    await _applyVisualData(
+      visualData,
+      preferredState: _resolveVisualAnimState(),
+      isInitialLoad: true,
+    );
+    _syncSpriteVisual();
+  }
+
+  Future<void> _refreshWeaponVisuals({
+    required int version,
+    required PlayerAnimState visualState,
+  }) async {
+    final requestedWeapon = currentWeapon;
+    final visualData = await _buildVisualDataForWeapon(requestedWeapon);
+    if (version != _weaponSwitchVersion) {
+      if (debugWeaponSwitchLogs) {
+        if (false)
+          print('[PlayerWeapon] switch ignored (stale version=$version)');
+      }
+      return;
+    }
+    if (visualData == null) {
+      if (debugWeaponSwitchLogs) {
+        if (false)
+          print(
+            '[PlayerWeapon] switch failed weapon=${requestedWeapon.name} state=${visualState.name}',
+          );
+      }
+      return;
+    }
+
+    await _applyVisualData(
+      visualData,
+      preferredState: visualState,
+      isInitialLoad: _animationRenderer == null,
+    );
+    _syncSpriteVisual();
+
+    if (debugWeaponSwitchLogs) {
+      if (false)
+        print(
+          '[PlayerWeapon] switch applied weapon=${requestedWeapon.name} state=${visualState.name}',
+        );
+    }
+  }
+
+  Future<void> _applyVisualData(
+    _PlayerVisualData visualData, {
+    required PlayerAnimState preferredState,
+    required bool isInitialLoad,
+  }) async {
+    if (_animationRenderer == null) {
+      final baseScale = playerDesiredVisualHeight / playerLogicalFrameHeight;
+      final visualContainerSize = Vector2(
+        playerLogicalFrameWidth * baseScale,
+        playerDesiredVisualHeight,
+      );
+
+      _animationRenderer =
+          _PlayerAnimationRenderer(
+              bundles: Map<PlayerAnimState, _AtlasAnimationBundle>.from(
+                visualData.bundles,
+              ),
+              debugMeta: _debugAnimMeta,
+              scaleMultipliers: Map<PlayerAnimState, double>.from(
+                visualData.scaleMultipliers,
+              ),
+              renderOffsetsLogical: Map<PlayerAnimState, Offset>.from(
+                visualData.renderOffsetsLogical,
+              ),
+              desiredVisualHeight: playerDesiredVisualHeight,
+              parentGameplaySize: size.clone(),
+            )
+            ..size = visualContainerSize
+            ..position = Vector2(size.x / 2, size.y)
+            ..anchor = Anchor.bottomCenter
+            ..priority = 0;
+
+      await add(_animationRenderer!);
+      if (debugRenderOrderLogs) {
+        if (false)
+          print(
+            '[RenderOrder] component=_PlayerAnimationRenderer priority=${_animationRenderer!.priority}',
+          );
+      }
+    } else {
+      _animationRenderer!.replaceVisualData(
+        nextBundles: visualData.bundles,
+        nextDebugMeta: visualData.debugMeta,
+        nextScaleMultipliers: visualData.scaleMultipliers,
+        nextRenderOffsetsLogical: visualData.renderOffsetsLogical,
+        preferredState: preferredState,
+      );
+    }
+
+    _debugAnimMeta
+      ..clear()
+      ..addAll(visualData.debugMeta);
+
+    if (isInitialLoad && debugIdleTwoFramesOnly) {
+      _forcedAnimState = PlayerAnimState.idle;
+      _animationRenderer?.setAnimationState(PlayerAnimState.idle);
+      _animationRenderer?.setFacingDirection(1);
+    }
+  }
+
+  Future<_PlayerVisualData?> _buildVisualDataForWeapon(
+    WeaponType weapon,
+  ) async {
+    await _ensureRenderNormalizationReference();
+
+    final idleBundle = await _resolveBundleWithFallback(
+      PlayerAnimState.idle,
+      weapon,
+    );
+    if (idleBundle == null) {
+      if (debugWeaponSwitchLogs) {
+        if (false)
+          print('[PlayerWeapon] idle bundle missing for weapon=${weapon.name}');
+      }
+      return null;
+    }
+
     final runBundle = debugIdleTwoFramesOnly
         ? null
-        : await _loadAtlasBundle(
-            imagePath: _playerRunSheetPath,
-            atlasPath: _playerRunAtlasPath,
-            minFrameIndex: 0,
-            maxFrameIndex: 24, // Use frames 0-24 for auto-gun run
-            label: 'run_auto_gun',
-          );
-    final idleBundle = await _loadAtlasBundle(
-      imagePath: _playerIdleSheetPath,
-      atlasPath: _playerIdleAtlasPath,
-      label: 'idle_auto_gun',
-    );
+        : await _resolveBundleWithFallback(PlayerAnimState.run, weapon);
     final jumpBundle = debugIdleTwoFramesOnly
         ? null
-        : await _loadAtlasBundle(
-            imagePath: _playerJumpSheetPath,
-            atlasPath: _playerJumpAtlasPath,
-            label: 'jump_auto_gun', // Use all frames from auto-gun atlas
-          );
-
-    if (idleBundle != null) {
-      final idleIndexes = idleBundle.frames
-          .map((f) => f.frameIndex)
-          .toList(growable: false);
-      final idleRows =
-          idleBundle.frames.map((f) => f.row).toSet().toList(growable: false)
-            ..sort();
-      final idleCols =
-          idleBundle.frames.map((f) => f.col).toSet().toList(growable: false)
-            ..sort();
-      final idleMaxRow = idleRows.isEmpty ? 0 : idleRows.last;
-      final idleMaxCol = idleCols.isEmpty ? 0 : idleCols.last;
-      final idleFrameWidth = idleBundle.image.width / (idleMaxCol + 1);
-      final idleFrameHeight = idleBundle.image.height / (idleMaxRow + 1);
-      final idleFirst = idleBundle.frames.first;
-      final idleLast = idleBundle.frames.last;
-      final idleSourceRect0 = Rect.fromLTWH(
-        idleFirst.col * idleFrameWidth,
-        idleFirst.row * idleFrameHeight,
-        idleFrameWidth,
-        idleFrameHeight,
-      );
-      final idleSourceRectLast = Rect.fromLTWH(
-        idleLast.col * idleFrameWidth,
-        idleLast.row * idleFrameHeight,
-        idleFrameWidth,
-        idleFrameHeight,
-      );
-      print('[IdleAutoGun] image=${idleBundle.imagePath.split('/').last}');
-      print('[IdleAutoGun] atlas=${idleBundle.atlasPath.split('/').last}');
-      print(
-        '[IdleAutoGun] imageSize=${idleBundle.image.width}x${idleBundle.image.height}',
-      );
-      print('[IdleAutoGun] framesLoaded=${idleBundle.frames.length}');
-      print(
-        '[IdleAutoGun] minFrameIndex=${idleIndexes.first} maxFrameIndex=${idleIndexes.last}',
-      );
-      print('[IdleAutoGun] frameOrder=$idleIndexes');
-      print('[IdleAutoGun] maxRow=$idleMaxRow maxCol=$idleMaxCol');
-      print(
-        '[IdleAutoGun] inferredFrameSize=${idleFrameWidth.toInt()}x${idleFrameHeight.toInt()}',
-      );
-      print(
-        '[IdleAutoGun] sourceRect frameIndex=${idleFirst.frameIndex} row=${idleFirst.row} col=${idleFirst.col} '
-        'rect=(${idleSourceRect0.left.toInt()},${idleSourceRect0.top.toInt()},${idleSourceRect0.width.toInt()}x${idleSourceRect0.height.toInt()})',
-      );
-      print(
-        '[IdleAutoGun] sourceRect frameIndex=${idleLast.frameIndex} row=${idleLast.row} col=${idleLast.col} '
-        'rect=(${idleSourceRectLast.left.toInt()},${idleSourceRectLast.top.toInt()},${idleSourceRectLast.width.toInt()}x${idleSourceRectLast.height.toInt()})',
-      );
-      print(
-        '[PlayerAnim] idle now uses ${idleBundle.imagePath.split('/').last}',
-      );
-    }
-
-    if (jumpBundle != null) {
-      final jumpIndexes = jumpBundle.frames
-          .map((f) => f.frameIndex)
-          .toList(growable: false);
-      final jumpRows =
-          jumpBundle.frames.map((f) => f.row).toSet().toList(growable: false)
-            ..sort();
-      final jumpCols =
-          jumpBundle.frames.map((f) => f.col).toSet().toList(growable: false)
-            ..sort();
-      final jumpMaxRow = jumpRows.isEmpty ? 0 : jumpRows.last;
-      final jumpMaxCol = jumpCols.isEmpty ? 0 : jumpCols.last;
-      final jumpFrameWidth = jumpBundle.image.width / (jumpMaxCol + 1);
-      final jumpFrameHeight = jumpBundle.image.height / (jumpMaxRow + 1);
-      final jumpFirst = jumpBundle.frames.first;
-      final jumpLast = jumpBundle.frames.last;
-      final jumpSourceRect0 = Rect.fromLTWH(
-        jumpFirst.col * jumpFrameWidth,
-        jumpFirst.row * jumpFrameHeight,
-        jumpFrameWidth,
-        jumpFrameHeight,
-      );
-      final jumpSourceRectLast = Rect.fromLTWH(
-        jumpLast.col * jumpFrameWidth,
-        jumpLast.row * jumpFrameHeight,
-        jumpFrameWidth,
-        jumpFrameHeight,
-      );
-      print('[JumpAutoGun] image=${jumpBundle.imagePath.split('/').last}');
-      print('[JumpAutoGun] atlas=${jumpBundle.atlasPath.split('/').last}');
-      print(
-        '[JumpAutoGun] imageSize=${jumpBundle.image.width}x${jumpBundle.image.height}',
-      );
-      print('[JumpAutoGun] framesLoaded=${jumpBundle.frames.length}');
-      print(
-        '[JumpAutoGun] minFrameIndex=${jumpIndexes.first} maxFrameIndex=${jumpIndexes.last}',
-      );
-      print('[JumpAutoGun] frameOrder=$jumpIndexes');
-      print('[JumpAutoGun] maxRow=$jumpMaxRow maxCol=$jumpMaxCol');
-      print(
-        '[JumpAutoGun] inferredFrameSize=${jumpFrameWidth.toInt()}x${jumpFrameHeight.toInt()}',
-      );
-      print(
-        '[JumpAutoGun] sourceRect frameIndex=${jumpFirst.frameIndex} row=${jumpFirst.row} col=${jumpFirst.col} '
-        'rect=(${jumpSourceRect0.left.toInt()},${jumpSourceRect0.top.toInt()},${jumpSourceRect0.width.toInt()}x${jumpSourceRect0.height.toInt()})',
-      );
-      print(
-        '[JumpAutoGun] sourceRect frameIndex=${jumpLast.frameIndex} row=${jumpLast.row} col=${jumpLast.col} '
-        'rect=(${jumpSourceRectLast.left.toInt()},${jumpSourceRectLast.top.toInt()},${jumpSourceRectLast.width.toInt()}x${jumpSourceRectLast.height.toInt()})',
-      );
-      print(
-        '[PlayerAnim] jump now uses ${jumpBundle.imagePath.split('/').last}',
-      );
-    }
-
-    if (idleBundle != null && debugAnimationLogs) {
-      print(
-        '[PlayerAnim] loaded idle frames=${idleBundle.frames.length} '
-        'image=${idleBundle.imagePath.split('/').last}',
-      );
-    }
-    if (runBundle != null && debugAnimationLogs) {
-      print(
-        '[PlayerAnim] loaded run frames=${runBundle.frames.length} '
-        'image=${runBundle.imagePath.split('/').last}',
-      );
-    }
-    if (runBundle != null) {
-      final runIndexes = runBundle.frames
-          .map((f) => f.frameIndex)
-          .toList(growable: false);
-      final runRows =
-          runBundle.frames.map((f) => f.row).toSet().toList(growable: false)
-            ..sort();
-      final runCols =
-          runBundle.frames.map((f) => f.col).toSet().toList(growable: false)
-            ..sort();
-      final inferredFrameWidth = runCols.isEmpty
-          ? _AtlasAnimationBundle.logicalFrameWidth
-          : runBundle.image.width / (runCols.last + 1);
-      final inferredFrameHeight = runRows.isEmpty
-          ? _AtlasAnimationBundle.logicalFrameHeight
-          : runBundle.image.height / (runRows.last + 1);
-      final firstRunFrame = runBundle.frames.first;
-      final lastRunFrame = runBundle.frames.last;
-      final firstSourceRect = Rect.fromLTWH(
-        firstRunFrame.col * inferredFrameWidth,
-        firstRunFrame.row * inferredFrameHeight,
-        inferredFrameWidth,
-        inferredFrameHeight,
-      );
-      final lastSourceRect = Rect.fromLTWH(
-        lastRunFrame.col * inferredFrameWidth,
-        lastRunFrame.row * inferredFrameHeight,
-        inferredFrameWidth,
-        inferredFrameHeight,
-      );
-      print('[RunAutoGun] loaded image=${runBundle.imagePath.split('/').last}');
-      print('[RunAutoGun] loaded atlas=${runBundle.atlasPath.split('/').last}');
-      print(
-        '[RunAutoGun] image size=${runBundle.image.width}x${runBundle.image.height}',
-      );
-      print('[RunAutoGun] atlas frames loaded=${runBundle.frames.length}');
-      print('[RunAutoGun] frameOrder=$runIndexes');
-      print('[RunAutoGun] rows/cols found rows=$runRows cols=$runCols');
-      print(
-        '[RunAutoGun] max frameIndex=${runIndexes.isEmpty ? -1 : runIndexes.last}',
-      );
-      print(
-        '[RunAutoGun] frameSize=${inferredFrameWidth.toInt()}x${inferredFrameHeight.toInt()}',
-      );
-      print(
-        '[RunAutoGun] sourceRect frameIndex=${firstRunFrame.frameIndex} '
-        'row=${firstRunFrame.row} col=${firstRunFrame.col} '
-        'rect=(${firstSourceRect.left.toInt()},${firstSourceRect.top.toInt()},${firstSourceRect.width.toInt()}x${firstSourceRect.height.toInt()})',
-      );
-      print(
-        '[RunAutoGun] sourceRect frameIndex=${lastRunFrame.frameIndex} '
-        'row=${lastRunFrame.row} col=${lastRunFrame.col} '
-        'rect=(${lastSourceRect.left.toInt()},${lastSourceRect.top.toInt()},${lastSourceRect.width.toInt()}x${lastSourceRect.height.toInt()})',
-      );
-      print('[RunAutoGun] run state now uses auto gun animation');
-    }
-    if (jumpBundle != null && debugAnimationLogs) {
-      print(
-        '[PlayerAnim] loaded jump frames=${jumpBundle.frames.length} '
-        'image=${jumpBundle.imagePath.split('/').last}',
-      );
-    }
+        : await _resolveBundleWithFallback(PlayerAnimState.jump, weapon);
     final deathBundle = debugIdleTwoFramesOnly
         ? null
-        : await _loadAtlasBundle(
-            imagePath: _playerDeathSheetPath,
-            atlasPath: _playerDeathAtlasPath,
-            label: 'death_auto_gun', // No frame limits - use all frames
-          );
-    if (deathBundle != null) {
-      final deathIndexes = deathBundle.frames
-          .map((f) => f.frameIndex)
-          .toList(growable: false);
-      final deathRows =
-          deathBundle.frames.map((f) => f.row).toSet().toList(growable: false)
-            ..sort();
-      final deathCols =
-          deathBundle.frames.map((f) => f.col).toSet().toList(growable: false)
-            ..sort();
-      final deathMaxRow = deathRows.isEmpty ? 0 : deathRows.last;
-      final deathMaxCol = deathCols.isEmpty ? 0 : deathCols.last;
-      final deathFrameWidth = deathBundle.image.width / (deathMaxCol + 1);
-      final deathFrameHeight = deathBundle.image.height / (deathMaxRow + 1);
-      final firstDeath = deathBundle.frames.first;
-      final lastDeath = deathBundle.frames.last;
-      final firstDeathRect = Rect.fromLTWH(
-        firstDeath.col * deathFrameWidth,
-        firstDeath.row * deathFrameHeight,
-        deathFrameWidth,
-        deathFrameHeight,
-      );
-      final lastDeathRect = Rect.fromLTWH(
-        lastDeath.col * deathFrameWidth,
-        lastDeath.row * deathFrameHeight,
-        deathFrameWidth,
-        deathFrameHeight,
-      );
-      final deathImageName = deathBundle.imagePath.split('/').last;
-      final deathAtlasName = deathBundle.atlasPath.split('/').last;
-      print('[DeathAutoGun] image=$deathImageName');
-      print('[DeathAutoGun] atlas=$deathAtlasName');
-      print(
-        '[DeathAutoGun] imageSize=${deathBundle.image.width}x${deathBundle.image.height}',
-      );
-      print('[DeathAutoGun] framesLoaded=${deathBundle.frames.length}');
-      print(
-        '[DeathAutoGun] minFrameIndex=${deathIndexes.first} maxFrameIndex=${deathIndexes.last}',
-      );
-      print('[DeathAutoGun] frameOrder=$deathIndexes');
-      print('[DeathAutoGun] maxRow=$deathMaxRow maxCol=$deathMaxCol');
-      print(
-        '[DeathAutoGun] inferredFrameSize=${deathFrameWidth.toInt()}x${deathFrameHeight.toInt()}',
-      );
-      print(
-        '[DeathAutoGun] sourceRect frameIndex=${firstDeath.frameIndex} row=${firstDeath.row} col=${firstDeath.col} '
-        'rect=(${firstDeathRect.left.toInt()},${firstDeathRect.top.toInt()},${firstDeathRect.width.toInt()}x${firstDeathRect.height.toInt()})',
-      );
-      print(
-        '[DeathAutoGun] sourceRect lastFrame frameIndex=${lastDeath.frameIndex} row=${lastDeath.row} col=${lastDeath.col} '
-        'rect=(${lastDeathRect.left.toInt()},${lastDeathRect.top.toInt()},${lastDeathRect.width.toInt()}x${lastDeathRect.height.toInt()})',
-      );
-      print('[DeathAutoGun] loaded frames=${deathBundle.frames.length}');
-      print('[PlayerAnim] death now uses $deathImageName');
-    }
+        : await _resolveBundleWithFallback(PlayerAnimState.death, weapon);
 
-    final idleDebugBundle = (debugIdleTwoFramesOnly && idleBundle != null)
+    final idleDebugBundle = (debugIdleTwoFramesOnly)
         ? _AtlasAnimationBundle(
             imagePath: idleBundle.imagePath,
             atlasPath: idleBundle.atlasPath,
@@ -1952,9 +2130,11 @@ class PlayerComponent extends PositionComponent {
           )
         : null;
 
-    if (runBundle == null && idleBundle == null) {
-      _animationRenderer = null;
-      return;
+    final idleOnlyBundle = idleDebugBundle ?? idleBundle;
+    if (debugIdleTwoFramesOnly && idleOnlyBundle.frames.isEmpty) {
+      if (false)
+        print('[IdleDebug] FAILED: idle frameIndex 0..12 not available');
+      return null;
     }
 
     double resolveMaxBboxHeight(_AtlasAnimationBundle? bundle) {
@@ -1965,8 +2145,9 @@ class PlayerComponent extends PositionComponent {
     final idleMaxBboxHeight = resolveMaxBboxHeight(idleBundle);
     final runMaxBboxHeight = resolveMaxBboxHeight(runBundle);
     final jumpMaxBboxHeight = resolveMaxBboxHeight(jumpBundle);
-    final deathMaxBboxHeight = resolveMaxBboxHeight(deathBundle);
-    final targetBboxHeight = idleMaxBboxHeight > 0 ? idleMaxBboxHeight : 1.0;
+    final targetBboxHeight =
+        _referenceIdleMaxBboxHeight ??
+        (idleMaxBboxHeight > 0 ? idleMaxBboxHeight : 1.0);
 
     final autoRunScaleMultiplier = runMaxBboxHeight > 0
         ? targetBboxHeight / runMaxBboxHeight
@@ -1980,91 +2161,28 @@ class PlayerComponent extends PositionComponent {
         runVisualMultiplierOverride ?? autoRunScaleMultiplier;
     final jumpScaleMultiplier =
         jumpVisualMultiplierOverride ?? autoJumpScaleMultiplier;
-
-    if (debugAnimationLogs) {
-      print('[PlayerScale] idleMaxBboxHeight=${idleMaxBboxHeight.toInt()}');
-      print('[PlayerScale] runMaxBboxHeight=${runMaxBboxHeight.toInt()}');
-      print('[PlayerScale] jumpMaxBboxHeight=${jumpMaxBboxHeight.toInt()}');
-      print(
-        '[PlayerScale] idleMultiplier=${idleScaleMultiplier.toStringAsFixed(2)}',
-      );
-      print(
-        '[PlayerScale] runMultiplier=${runScaleMultiplier.toStringAsFixed(2)}',
-      );
-      print(
-        '[PlayerScale] jumpMultiplier=${jumpScaleMultiplier.toStringAsFixed(2)}',
-      );
-      print(
-        '[PlayerScale] deathMultiplier=${deathVisualMultiplier.toStringAsFixed(2)}',
-      );
-      print(
-        '[PlayerDeath] deathVisualMultiplier=${deathVisualMultiplier.toStringAsFixed(2)}',
-      );
-    }
-    if (runBundle != null) {
-      print('[RunAutoGun] maxBboxHeight=${runMaxBboxHeight.toInt()}');
-      print(
-        '[RunAutoGun] visualMultiplier=${runScaleMultiplier.toStringAsFixed(2)}',
-      );
-      print('[RunAutoGun] baseline / feet correction works');
-    }
-    if (idleBundle != null) {
-      print(
-        '[PlayerScale] idleAutoGunMaxBboxHeight=${idleMaxBboxHeight.toInt()}',
-      );
-    }
-    if (runBundle != null) {
-      print(
-        '[PlayerScale] runAutoGunMaxBboxHeight=${runMaxBboxHeight.toInt()}',
-      );
-    }
-    if (jumpBundle != null) {
-      print(
-        '[PlayerScale] jumpAutoGunMaxBboxHeight=${jumpMaxBboxHeight.toInt()}',
-      );
-    }
-    if (deathBundle != null) {
-      print(
-        '[DeathAutoGun] deathAutoGunMaxBboxHeight=${deathMaxBboxHeight.toInt()}',
-      );
-      print(
-        '[DeathAutoGun] deathVisualMultiplier=${deathVisualMultiplier.toStringAsFixed(2)}',
-      );
-      print(
-        '[DeathAutoGun] deathVisualGroundOffsetY=${deathVisualGroundOffsetY.toStringAsFixed(2)}',
-      );
-    }
-    print(
-      '[PlayerScale] idleMultiplier=${idleScaleMultiplier.toStringAsFixed(2)}',
-    );
-    print(
-      '[PlayerScale] runMultiplier=${runScaleMultiplier.toStringAsFixed(2)}',
-    );
-    print(
-      '[PlayerScale] jumpMultiplier=${jumpScaleMultiplier.toStringAsFixed(2)}',
-    );
+    final weaponScaleMultiplier = weapon == WeaponType.sniperGun
+        ? sniperRenderScale
+        : 1.0;
+    final sniperRunOnlyScaleMultiplier = weapon == WeaponType.sniperGun
+        ? sniperRunRenderScale
+        : 1.0;
 
     final scaleMultipliers = <PlayerAnimState, double>{
-      PlayerAnimState.idle: idleScaleMultiplier,
-      PlayerAnimState.run: runScaleMultiplier,
-      PlayerAnimState.jump: jumpScaleMultiplier,
-      PlayerAnimState.dash: 1.0,
-      PlayerAnimState.gun: 1.0,
-      PlayerAnimState.death: deathVisualMultiplier,
+      PlayerAnimState.idle: idleScaleMultiplier * weaponScaleMultiplier,
+      PlayerAnimState.run:
+          runScaleMultiplier *
+          weaponScaleMultiplier *
+          sniperRunOnlyScaleMultiplier,
+      PlayerAnimState.jump: jumpScaleMultiplier * weaponScaleMultiplier,
+      PlayerAnimState.dash: 1.0 * weaponScaleMultiplier,
+      PlayerAnimState.gun: 1.0 * weaponScaleMultiplier,
+      PlayerAnimState.death: deathVisualMultiplier * weaponScaleMultiplier,
     };
 
-    final idleOnlyBundle = idleDebugBundle ?? idleBundle;
-    if (debugIdleTwoFramesOnly &&
-        (idleOnlyBundle == null || idleOnlyBundle.frames.length < 13)) {
-      print('[IdleDebug] FAILED: idle frameIndex 0..12 not available');
-      _animationRenderer = null;
-      return;
-    }
-
-    // Prepare bundles map for custom renderer
     final bundles = debugIdleTwoFramesOnly
         ? <PlayerAnimState, _AtlasAnimationBundle>{
-            PlayerAnimState.idle: idleOnlyBundle!,
+            PlayerAnimState.idle: idleOnlyBundle,
             PlayerAnimState.run: idleOnlyBundle,
             PlayerAnimState.jump: idleOnlyBundle,
             PlayerAnimState.gun: idleOnlyBundle,
@@ -2072,179 +2190,246 @@ class PlayerComponent extends PositionComponent {
             PlayerAnimState.dash: idleOnlyBundle,
           }
         : <PlayerAnimState, _AtlasAnimationBundle>{
-            PlayerAnimState.idle:
-                idleBundle ?? (runBundle ?? jumpBundle ?? deathBundle)!,
-            PlayerAnimState.run:
-                runBundle ?? (idleBundle ?? jumpBundle ?? deathBundle)!,
-            PlayerAnimState.jump:
-                jumpBundle ?? (runBundle ?? idleBundle ?? deathBundle)!,
-            PlayerAnimState.gun:
-                idleBundle ?? (runBundle ?? jumpBundle ?? deathBundle)!,
+            PlayerAnimState.idle: idleBundle,
+            PlayerAnimState.run: runBundle ?? idleBundle,
+            PlayerAnimState.jump: jumpBundle ?? runBundle ?? idleBundle,
+            PlayerAnimState.gun: idleBundle,
             PlayerAnimState.death:
-                deathBundle ?? (jumpBundle ?? runBundle ?? idleBundle)!,
-            PlayerAnimState.dash:
-                runBundle ?? (idleBundle ?? jumpBundle ?? deathBundle)!,
+                deathBundle ?? jumpBundle ?? runBundle ?? idleBundle,
+            PlayerAnimState.dash: runBundle ?? idleBundle,
           };
 
-    // Build debug metadata for animation timing
-    _debugAnimMeta
-      ..clear()
-      ..addAll({
-        PlayerAnimState.idle: _DebugAnimMeta(
-          label: 'idle',
-          frameCount:
-              (debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle)
-                  ?.frames
-                  .length ??
-              4,
-          stepTime: 0.12,
-          loop: true,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle,
-        ),
-        PlayerAnimState.run: _DebugAnimMeta(
-          label: 'run',
-          frameCount: debugIdleTwoFramesOnly
-              ? idleOnlyBundle?.frames.length ?? 0
-              : runBundle?.frames.length ?? 0,
-          stepTime: 0.08,
-          loop: true,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : runBundle,
-        ),
-        PlayerAnimState.jump: _DebugAnimMeta(
-          label: 'jump',
-          frameCount: debugIdleTwoFramesOnly
-              ? idleOnlyBundle?.frames.length ?? 0
-              : jumpBundle?.frames.length ?? 0,
-          stepTime: 0.12,
-          loop: !debugIdleTwoFramesOnly,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : jumpBundle,
-        ),
-        PlayerAnimState.dash: _DebugAnimMeta(
-          label: 'dash',
-          frameCount: debugIdleTwoFramesOnly
-              ? idleOnlyBundle?.frames.length ?? 0
-              : runBundle?.frames.length ?? 0,
-          stepTime: 0.08,
-          loop: true,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : runBundle,
-        ),
-        PlayerAnimState.death: _DebugAnimMeta(
-          label: 'death',
-          frameCount: debugIdleTwoFramesOnly
-              ? idleOnlyBundle?.frames.length ?? 0
-              : deathBundle?.frames.length ?? 0,
-          stepTime: 0.12,
-          loop: false,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : deathBundle,
-        ),
-        PlayerAnimState.gun: _DebugAnimMeta(
-          label: 'gun',
-          frameCount:
-              (debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle)
-                  ?.frames
-                  .length ??
-              0,
-          stepTime: 0.12,
-          loop: true,
-          bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle,
-        ),
-      });
+    final renderOffsetsLogical = <PlayerAnimState, Offset>{};
+    for (final entry in bundles.entries) {
+      final bundle = entry.value;
+      final bundleWeapon = _weaponTypeFromImagePath(bundle.imagePath);
+      final manualOffset =
+          _manualWeaponRenderOffsetsLogical[bundleWeapon] ?? Offset.zero;
+      final autoOffsetX = _referenceBodyCenterX == null
+          ? 0.0
+          : _referenceBodyCenterX! - _estimateBodyCenterX(bundle);
+      final offset = Offset(autoOffsetX + manualOffset.dx, manualOffset.dy);
+      renderOffsetsLogical[entry.key] = offset;
 
-    // Keep gameplay hitbox unchanged (32x64).
-    // Visual renderer uses logical frame 768x448 scaled.
-    final baseScale = playerDesiredVisualHeight / playerLogicalFrameHeight;
-    final visualContainerSize = Vector2(
-      playerLogicalFrameWidth * baseScale,
-      playerDesiredVisualHeight,
+      if (debugWeaponSwitchLogs) {
+        if (false)
+          print(
+            '[PlayerRenderNormalize] state=${entry.key.name} weapon=${bundleWeapon.name} '
+            'autoOffsetX=${autoOffsetX.toStringAsFixed(2)} '
+            'manualOffset=(${manualOffset.dx.toStringAsFixed(2)},${manualOffset.dy.toStringAsFixed(2)}) '
+            'finalOffset=(${offset.dx.toStringAsFixed(2)},${offset.dy.toStringAsFixed(2)})',
+          );
+      }
+    }
+
+    final debugMeta = <PlayerAnimState, _DebugAnimMeta>{
+      PlayerAnimState.idle: _DebugAnimMeta(
+        label: 'idle',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : idleBundle.frames.length,
+        stepTime: 0.12,
+        loop: true,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle,
+      ),
+      PlayerAnimState.run: _DebugAnimMeta(
+        label: 'run',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : runBundle?.frames.length ?? 0,
+        stepTime: runAnimationStepTime,
+        loop: true,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : runBundle,
+      ),
+      PlayerAnimState.jump: _DebugAnimMeta(
+        label: 'jump',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : jumpBundle?.frames.length ?? 0,
+        stepTime: 0.12,
+        loop: !debugIdleTwoFramesOnly,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : jumpBundle,
+      ),
+      PlayerAnimState.dash: _DebugAnimMeta(
+        label: 'dash',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : runBundle?.frames.length ?? 0,
+        stepTime: 0.08,
+        loop: true,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : runBundle,
+      ),
+      PlayerAnimState.death: _DebugAnimMeta(
+        label: 'death',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : deathBundle?.frames.length ?? 0,
+        stepTime: 0.06,
+        loop: false,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : deathBundle,
+      ),
+      PlayerAnimState.gun: _DebugAnimMeta(
+        label: 'gun',
+        frameCount: debugIdleTwoFramesOnly
+            ? idleOnlyBundle.frames.length
+            : idleBundle.frames.length,
+        stepTime: 0.12,
+        loop: true,
+        bundle: debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle,
+      ),
+    };
+
+    return _PlayerVisualData(
+      bundles: bundles,
+      debugMeta: debugMeta,
+      scaleMultipliers: scaleMultipliers,
+      renderOffsetsLogical: renderOffsetsLogical,
     );
+  }
 
-    _animationRenderer =
-        _PlayerAnimationRenderer(
-            bundles: bundles,
-            debugMeta: _debugAnimMeta,
-            scaleMultipliers: scaleMultipliers,
-            desiredVisualHeight: playerDesiredVisualHeight,
-            parentGameplaySize: size.clone(),
-          )
-          ..size = visualContainerSize
-          ..position = Vector2(size.x / 2, size.y)
-          ..anchor = Anchor.bottomCenter
-          ..priority = 0;
-
-    if (debugAnimationLogs) {
-      print(
-        '[PlayerVisual] rendererSize=[${visualContainerSize.x.toInt()},${visualContainerSize.y.toInt()}]',
-      );
-      print(
-        '[PlayerVisual] rendererPos=[${(size.x / 2).toInt()},${size.y.toInt()}]',
-      );
-      print('[PlayerVisual] anchor=bottomCenter');
-      print(
-        '[PlayerVisual] playerHitbox=[${size.x.toInt()},${size.y.toInt()}]',
-      );
+  Future<void> _ensureRenderNormalizationReference() async {
+    if (_referenceIdleMaxBboxHeight != null && _referenceBodyCenterX != null) {
+      return;
     }
 
-    if (_debugRunAtlas) {
-      print('[PlayerAtlas] custom renderer initialized');
-      print('[PlayerAtlas] logicalFrame=768x448 (constant)');
-      print('[PlayerAtlas] desiredVisualHeight=$playerDesiredVisualHeight');
-      print(
-        '[PlayerAtlas] run: ${runBundle?.frames.length ?? 0} frames (0-12)',
-      );
-      print(
-        '[PlayerAtlas] idle: ${(debugIdleTwoFramesOnly ? idleOnlyBundle : idleBundle)?.frames.length ?? 0} frames',
-      );
-      print(
-        '[PlayerAtlas] jump: ${jumpBundle?.frames.length ?? 0} frames (all)',
-      );
-      print(
-        '[PlayerAtlas] death: ${deathBundle?.frames.length ?? 0} frames (all)',
-      );
-      print('[PlayerAtlas] rendering uses originalX/originalY for placement');
-      print(
-        '[PlayerAtlas] No enemy rendering - enableEnemies=false in GameWorld',
-      );
-      // idle debug mode intentionally keeps startup quiet; key presses log actions.
+    final refIdle = await _loadBundleCached(
+      PlayerAnimState.idle,
+      WeaponType.autoGun,
+    );
+    if (refIdle == null) {
+      return;
     }
 
-    await add(_animationRenderer!);
-    if (debugRenderOrderLogs) {
-      print(
-        '[RenderOrder] component=_PlayerAnimationRenderer priority=${_animationRenderer!.priority}',
-      );
+    _referenceIdleMaxBboxHeight = _resolveMaxBboxHeight(refIdle);
+    _referenceBodyCenterX = _estimateBodyCenterX(refIdle);
+
+    if (debugWeaponSwitchLogs) {
+      if (false)
+        print(
+          '[PlayerRenderNormalize] reference idle autoGun '
+          'bboxHeight=${_referenceIdleMaxBboxHeight!.toStringAsFixed(2)} '
+          'bodyCenterX=${_referenceBodyCenterX!.toStringAsFixed(2)}',
+        );
+    }
+  }
+
+  double _resolveMaxBboxHeight(_AtlasAnimationBundle bundle) {
+    if (bundle.frames.isEmpty) return 0.0;
+    return bundle.frames.map((f) => f.src.height).reduce(max);
+  }
+
+  double _estimateBodyCenterX(_AtlasAnimationBundle bundle) {
+    if (bundle.frames.isEmpty) {
+      return _AtlasAnimationBundle.logicalFrameWidth / 2.0;
+    }
+    var sum = 0.0;
+    for (final frame in bundle.frames) {
+      sum += frame.originalX + frame.src.width / 2.0;
+    }
+    return sum / bundle.frames.length;
+  }
+
+  WeaponType _weaponTypeFromImagePath(String imagePath) {
+    if (imagePath.contains('_sniper_gun')) {
+      return WeaponType.sniperGun;
+    }
+    return WeaponType.autoGun;
+  }
+
+  Future<_AtlasAnimationBundle?> _resolveBundleWithFallback(
+    PlayerAnimState state,
+    WeaponType weapon,
+  ) async {
+    final resolvedState = _resolveAssetAnimState(state);
+    final primary = await _loadBundleCached(resolvedState, weapon);
+    if (primary != null) return primary;
+    if (weapon == WeaponType.autoGun) return null;
+
+    if (debugWeaponSwitchLogs) {
+      if (false)
+        print(
+          '[PlayerWeapon] fallback -> autoGun state=${resolvedState.name} weapon=${weapon.name}',
+        );
+    }
+    return _loadBundleCached(resolvedState, WeaponType.autoGun);
+  }
+
+  Future<_AtlasAnimationBundle?> _loadBundleCached(
+    PlayerAnimState state,
+    WeaponType weapon,
+  ) async {
+    final key = '${state.name}_${weapon.name}';
+    if (_animationBundleCache.containsKey(key)) {
+      if (debugWeaponSwitchLogs) {
+        if (false) print('[PlayerWeapon] cache hit key=$key');
+      }
+      return _animationBundleCache[key];
     }
 
-    if (debugRenderOrderLogs) {
-      final siblingPlayers =
-          parent?.children.whereType<PlayerComponent>().length ?? 1;
-      print('[RenderTrace] PlayerComponent siblings count=$siblingPlayers');
-    }
-    if (debugIdleTwoFramesOnly) {
-      _forcedAnimState = PlayerAnimState.idle;
-      _animationRenderer?.setAnimationState(PlayerAnimState.idle);
-      _animationRenderer?.setFacingDirection(1);
+    final paths = _resolveAssetPaths(state: state, weapon: weapon);
+    final bundle = await _loadAtlasBundle(
+      imagePath: paths.imagePath,
+      atlasPath: paths.atlasPath,
+      label: paths.label,
+    );
+    _animationBundleCache[key] = bundle;
+
+    if (debugWeaponSwitchLogs) {
+      if (bundle == null) {
+        if (false)
+          print(
+            '[PlayerWeapon] load failed key=$key image=${paths.imagePath} atlas=${paths.atlasPath}',
+          );
+      } else {
+        if (false)
+          print(
+            '[PlayerWeapon] loaded key=$key image=${paths.imagePath.split('/').last} '
+            'atlas=${paths.atlasPath.split('/').last} frames=${bundle.frames.length}',
+          );
+      }
     }
 
-    _syncSpriteVisual();
+    return bundle;
+  }
 
-    // One-shot debug: dump all children to verify single visual renderer
-    if (_debugRunAtlas) {
-      Future.delayed(const Duration(milliseconds: 200), () {
-        print('[PlayerAtlas] --- children dump ---');
-        for (final child in children) {
-          if (child is PositionComponent) {
-            print(
-              '[PlayerAtlas] child=${child.runtimeType} '
-              'size=${child.size} pos=${child.position} anchor=${child.anchor}',
-            );
-          } else {
-            print(
-              '[PlayerAtlas] child=${child.runtimeType} (non-PositionComponent)',
-            );
-          }
-        }
-        print('[PlayerAtlas] --- end children dump ---');
-      });
+  _WeaponAssetPaths _resolveAssetPaths({
+    required PlayerAnimState state,
+    required WeaponType weapon,
+  }) {
+    final resolvedState = _resolveAssetAnimState(state);
+    final animName = switch (resolvedState) {
+      PlayerAnimState.idle => 'idle',
+      PlayerAnimState.run => 'run',
+      PlayerAnimState.jump => 'jump',
+      PlayerAnimState.death => 'death',
+      PlayerAnimState.dash => 'run',
+      PlayerAnimState.gun => 'idle',
+    };
+
+    final suffix = switch (weapon) {
+      WeaponType.autoGun => '_auto_gun',
+      WeaponType.sniperGun => '_sniper_gun',
+    };
+
+    final base = '$_playerAtlasAssetsRoot/player_${animName}$suffix';
+    return _WeaponAssetPaths(
+      imagePath: '$base.png',
+      atlasPath: '${base}_atlas.json',
+      label: '${animName}_${weapon.name}',
+    );
+  }
+
+  PlayerAnimState _resolveAssetAnimState(PlayerAnimState state) {
+    switch (state) {
+      case PlayerAnimState.dash:
+        return PlayerAnimState.run;
+      case PlayerAnimState.gun:
+        return PlayerAnimState.idle;
+      case PlayerAnimState.idle:
+      case PlayerAnimState.run:
+      case PlayerAnimState.jump:
+      case PlayerAnimState.death:
+        return state;
     }
   }
 
@@ -2260,16 +2445,17 @@ class PlayerComponent extends PositionComponent {
     final image = await loadUiImageSafe(imagePath);
     if (image == null) {
       if (_debugRunAtlas) {
-        print('[PlayerAtlas] $label image load failed: $imagePath');
+        if (false) print('[PlayerAtlas] $label image load failed: $imagePath');
       }
       return null;
     }
 
     if (_debugRunAtlas) {
-      print(
-        '[PlayerAtlas] $label image source: $imagePath (${image.width}x${image.height})',
-      );
-      print('[PlayerAtlas] $label atlas source: $atlasPath');
+      if (false)
+        print(
+          '[PlayerAtlas] $label image source: $imagePath (${image.width}x${image.height})',
+        );
+      if (false) print('[PlayerAtlas] $label atlas source: $atlasPath');
     }
 
     try {
@@ -2277,7 +2463,10 @@ class PlayerComponent extends PositionComponent {
       final decoded = jsonDecode(atlasRaw);
       if (decoded is! List) {
         if (_debugRunAtlas) {
-          print('[PlayerAtlas] $label atlas format error: root is not a List');
+          if (false)
+            print(
+              '[PlayerAtlas] $label atlas format error: root is not a List',
+            );
         }
         return null;
       }
@@ -2334,10 +2523,11 @@ class PlayerComponent extends PositionComponent {
                     right <= image.width &&
                     bottom <= image.height;
                 if (!inBounds && _debugRunAtlas) {
-                  print(
-                    '[PlayerAtlas] $label frame $idx OUT OF BOUNDS: '
-                    'x=$x y=$y w=$w h=$h image=${image.width}x${image.height}',
-                  );
+                  if (false)
+                    print(
+                      '[PlayerAtlas] $label frame $idx OUT OF BOUNDS: '
+                      'x=$x y=$y w=$w h=$h image=${image.width}x${image.height}',
+                    );
                 }
                 if (!inBounds) {
                   return null;
@@ -2360,24 +2550,28 @@ class PlayerComponent extends PositionComponent {
         final indexes = frameDefs
             .map((f) => f.frameIndex)
             .toList(growable: false);
-        print('[PlayerAtlas] $label frames loaded: ${frameDefs.length}');
-        print('[PlayerAtlas] $label frameIndex order: $indexes');
+        if (false)
+          print('[PlayerAtlas] $label frames loaded: ${frameDefs.length}');
+        if (false) print('[PlayerAtlas] $label frameIndex order: $indexes');
         for (final f in frameDefs.take(3)) {
-          print(
-            '[PlayerAtlas] $label frame ${f.frameIndex} '
-            'src=(${f.src.left.toInt()}, ${f.src.top.toInt()}, ${f.src.width.toInt()}x${f.src.height.toInt()}) '
-            'orig=(${f.originalX.toInt()}, ${f.originalY.toInt()}) row=${f.row} col=${f.col}',
-          );
+          if (false)
+            print(
+              '[PlayerAtlas] $label frame ${f.frameIndex} '
+              'src=(${f.src.left.toInt()}, ${f.src.top.toInt()}, ${f.src.width.toInt()}x${f.src.height.toInt()}) '
+              'orig=(${f.originalX.toInt()}, ${f.originalY.toInt()}) row=${f.row} col=${f.col}',
+            );
         }
         if (frameDefs.length > 3) {
-          print(
-            '[PlayerAtlas] $label ... (${frameDefs.length - 3} more frames)',
-          );
+          if (false)
+            print(
+              '[PlayerAtlas] $label ... (${frameDefs.length - 3} more frames)',
+            );
         }
         if (minFrameIndex == 0 && maxFrameIndex == 12) {
-          print(
-            '[PlayerAtlas] $label loop: 0 → 1 → ... → 12 → 0 (run/idle only)',
-          );
+          if (false)
+            print(
+              '[PlayerAtlas] $label loop: 0 → 1 → ... → 12 → 0 (run/idle only)',
+            );
         }
       }
 
@@ -2393,7 +2587,10 @@ class PlayerComponent extends PositionComponent {
       );
     } catch (e) {
       if (_debugRunAtlas) {
-        print('[PlayerAtlas] $label atlas load/parse failed: $atlasPath ($e)');
+        if (false)
+          print(
+            '[PlayerAtlas] $label atlas load/parse failed: $atlasPath ($e)',
+          );
       }
       return null;
     }
@@ -2422,13 +2619,31 @@ class PlayerComponent extends PositionComponent {
     if (!isAlive) return;
     _lifeState = PlayerLifeState.dying;
     velocity.setZero();
+    weaponManager.setTriggerHeld(false);
+    _isMovementInputActive = false;
+    _isSprintHeld = false;
+    isOnGround = true;
     _setAnimationState(PlayerAnimState.death);
+
+    if (kDebugMode) {
+      debugPrint('[PLAYER_DEATH] started');
+      debugPrint('[PLAYER_DEATH] velocity zeroed');
+      debugPrint('[PLAYER_DEATH] death animation speed x2');
+    }
   }
 
   void markDead() {
     if (_lifeState == PlayerLifeState.dead) return;
     _lifeState = PlayerLifeState.dead;
     velocity.setZero();
+    weaponManager.setTriggerHeld(false);
+    _isMovementInputActive = false;
+    _isSprintHeld = false;
+    isOnGround = true;
     _setAnimationState(PlayerAnimState.death);
+
+    if (kDebugMode) {
+      debugPrint('[PLAYER_DEATH] velocity zeroed');
+    }
   }
 }

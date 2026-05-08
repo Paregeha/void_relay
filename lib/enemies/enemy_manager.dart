@@ -15,6 +15,24 @@ class EnemyManager extends Component {
     this.projectileRenderPriority = 200,
   });
 
+  @override
+  void update(double dt) {
+    super.update(dt);
+    // Remove only detached components. Pending-mount entries keep parent != null.
+    for (var i = enemies.length - 1; i >= 0; i--) {
+      final enemy = enemies[i];
+      if (!enemy.isMounted && enemy.parent == null) {
+        enemies.removeAt(i);
+      }
+    }
+    for (var i = projectiles.length - 1; i >= 0; i--) {
+      final projectile = projectiles[i];
+      if (!projectile.isMounted && projectile.parent == null) {
+        projectiles.removeAt(i);
+      }
+    }
+  }
+
   void addEnemy(BaseEnemy enemy) {
     if (enemies.contains(enemy)) {
       return;
@@ -35,6 +53,7 @@ class EnemyManager extends Component {
   void addProjectile(EnemyProjectileComponent projectile) {
     projectile.priority = projectileRenderPriority;
     projectiles.add(projectile);
+
     final host = parent;
     if (host != null) {
       host.add(projectile);

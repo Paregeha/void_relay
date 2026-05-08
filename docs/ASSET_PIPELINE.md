@@ -32,12 +32,10 @@ Use this runtime structure:
   - Row 2: `attack` (3 frames)
 
 ### Hover Drone
-- Path: `assets/sprites/enemies/hover_drone_sheet.png`
-- Frame size: `24x24`
-- Rows:
-  - Row 0: `idle` (2 frames)
-  - Row 1: `patrol` (4 frames)
-  - Row 2: `chase` (3 frames)
+- Path: `assets/sprites/enemies/drone_idle.png`
+- Atlas: `assets/sprites/enemies/drone_idle_atlas.json`
+- Usage:
+  - Single atlas is reused for all drone visual states (`idle`, `patrol`, `chase`, `shoot`, `death`).
 
 ### Sentry Turret
 - Path: `assets/sprites/enemies/sentry_turret_sheet.png`

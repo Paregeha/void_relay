@@ -1,7 +1,7 @@
 class GameConfig {
   // --- Feature toggles (temporary cleanup mode) ---
-  static const bool enableEnemies = false;
-  static const bool enableCoreHeating = false;
+  static const bool enableEnemies = true;
+  static const bool enableCoreHeating = true;
 
   // --- Camera / viewport ---
   static const double logicalWidth = 960.0;
@@ -24,6 +24,7 @@ class GameConfig {
 
   // --- Player health ---
   static const double playerMaxHealth = 100.0;
+  static const bool playerGodMode = false;
   static const double playerDeathSequenceDuration = 3.0;
   static const double playerDeathOverlayOpacity = 0.45;
 
@@ -33,6 +34,27 @@ class GameConfig {
 
   // Player projectiles
   static const double playerProjectileLifetime = 2.4;
+  static const String playerBulletSpritePath =
+      'assets/sprites/player/player_bullet.png';
+
+  // Weapon shooting configs (autoGun / sniperGun)
+  static const double autoGunFireCooldown = 0.22;
+  static const double autoGunBulletSpeed = 520.0;
+  static const double autoGunBulletRange = 380.0;
+  static const double autoGunBulletDamage = 1.0;
+  static const double autoGunBulletSpawnOffsetX = 44.0;
+  static const double autoGunBulletSpawnOffsetY = -10.0;
+
+  static const double sniperGunFireCooldown = 0.85;
+  static const double sniperGunBulletSpeed = 900.0;
+  static const double sniperGunBulletRange = 850.0;
+  static const double sniperGunBulletDamage = 3.0;
+  static const double sniperGunBulletSpawnOffsetX = 54.0;
+  // Increase this value to move sniper muzzle spawn lower on screen.
+  static const double sniperGunBulletSpawnOffsetY = -12.0;
+
+  static const double playerBulletWidth = 22.0;
+  static const double playerBulletHeight = 8.0;
 
   static const double pulseBlasterDamage = 16.0;
   static const double pulseBlasterSpeed = 330.0;
@@ -43,11 +65,21 @@ class GameConfig {
   static const double beamCutterFireInterval = 0.45;
   static const double beamCutterLifetime = 2.8;
 
+  // Enemy TTK targets based on the default player bullet damage.
+  static const double enemy3HitsToKill = 3.0;
+  static const double droneHitsToKill = 5.0;
+  static const double turretHitsToKill = 10.0;
+  static const double enemy3TargetHp = autoGunBulletDamage * enemy3HitsToKill;
+  static const double droneTargetHp = autoGunBulletDamage * droneHitsToKill;
+  static const double turretTargetHp = autoGunBulletDamage * turretHitsToKill;
+
   // Enemy health
+  static const bool showEnemyHpBars = true;
   static const double baseEnemyHealth = 100.0;
   static const double crawlerHealth = 55.0;
-  static const double hoverDroneHealth = 45.0;
-  static const double sentryTurretHealth = 80.0;
+  static const double hoverDroneHealth = droneTargetHp;
+  static const double sentryTurretMaxHealth = turretTargetHp;
+  static const double sentryTurretHealth = sentryTurretMaxHealth;
 
   // Enemy movement/combat
   static const double enemyDefaultSpeedX = -50.0;
@@ -56,15 +88,36 @@ class GameConfig {
   static const double enemyProjectileSpeed = 220.0;
   static const double enemyProjectileLifetime = 2.2;
 
-  static const double hoverDroneProjectileDamage = 7.0;
+  static const double hoverDroneProjectileDamage = 12.0;
   static const double hoverDroneProjectileSpeed = 210.0;
   static const double hoverDroneProjectileLifetime = 2.4;
-  static const double hoverDroneFireInterval = 1.1;
+  static const double droneDetectionRange = 460.0;
+  static const double droneAttackRange = 460.0;
+  static const double dronePreferredDistance = 300.0;
+  static const double droneStopTolerance = 35.0;
+  static const double droneMoveSpeed = 90.0;
+  static const double droneShootCooldown = 1.4;
+  static const double dronePatrolRadius = 180.0;
+  static const double dronePatrolSpeed = 45.0;
+  static const double droneHoverAmplitude = 12.0;
+  static const double droneHoverSpeed = 2.0;
+  static const double dronePreferredYOffset = 80.0;
+  static const double droneVerticalSpeedLimit = 70.0;
+  static const double droneDirectionThreshold = 0.1;
+  static const double droneShootVerticalTolerance = 26.0;
 
-  static const double sentryTurretProjectileDamage = 11.0;
+  static const double hoverDroneFireInterval = droneShootCooldown;
+
+  static const double sentryTurretProjectileDamage = 20.0;
   static const double sentryTurretProjectileSpeed = 250.0;
   static const double sentryTurretProjectileLifetime = 2.0;
-  static const double sentryTurretFireInterval = 0.95;
+  static const double sentryTurretFireInterval = 2.2;
+  static const double sentryTurretDetectionRange = 560.0;
+  static const double sentryTurretShootingRange = 460.0;
+  static const double sentryTurretVerticalTolerance = 110.0;
+  static const bool sentryTurretSpriteFacesRight = true;
+  static const double sentryTurretGroundYOffset = -12.0;
+  static const double sentryTurretMuzzleOffsetY = -16.0;
 
   // --- Collision ---
   static const double platformCollisionTolerance = 8.0;
@@ -74,6 +127,7 @@ class GameConfig {
   // --- Heat system ---
   static const bool heatEnabled = enableCoreHeating;
   static const double heatIncreasePerSecond = 6.0;
+  static const double coreHeatGainMultiplier = 0.66;
   static const double maxHeat = 100.0;
   static const double overheatThreshold = 100.0;
 
@@ -116,7 +170,7 @@ class GameConfig {
   static const double blackoutOpacity = 0.85; // прозорість темного екрану
 
   // Toxic gas event
-  static const double toxicGasDuration = 4.0; // отруйний газ тривае 4 сек
+  static const double toxicGasDuration = 6.0; // отруйний газ тривае 6 сек
   static const double toxicGasDamagePerTick = 8.0; // шкода за один тік
   static const double toxicGasDamageInterval =
       0.3; // тік кожні 0.3 сек (~3 тіки в сек)

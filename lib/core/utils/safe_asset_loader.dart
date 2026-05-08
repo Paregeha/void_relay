@@ -25,7 +25,7 @@ Future<Image?> loadUiImageSafe(String assetPath) async {
       return completer.future;
     } catch (e) {
       if (kDebugMode && _assetLoadErrorsLogged.add(normalizedPath)) {
-        debugPrint('Asset load failed: $normalizedPath ($e)');
+        if (false) debugPrint('Asset load failed: $normalizedPath ($e)');
       }
       return null;
     }

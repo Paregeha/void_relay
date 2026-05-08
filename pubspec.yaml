@@ -16,9 +16,11 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   flame: ^1.16.0
+  flame_audio: ^2.10.1
   flame_bloc: ^1.10.0
   flutter_bloc: ^9.1.1
   image: ^4.2.0
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:
@@ -32,9 +34,27 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/audio/
     - assets/sprites/player/
     - assets/sprites/enemies/
+    - assets/sprites/enemies/turrel.png
+    - assets/sprites/enemies/turrel_atlas.json
     - assets/sprites/world/
     - assets/audio/sfx/
     - assets/shaders/
+
+  fonts:
+    - family: Orbitron
+      fonts:
+        - asset: assets/fonts/Orbitron/Orbitron-Regular.ttf
+        - asset: assets/fonts/Orbitron/Orbitron-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Orbitron/Orbitron-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Orbitron/Orbitron-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Orbitron/Orbitron-ExtraBold.ttf
+          weight: 800
+        - asset: assets/fonts/Orbitron/Orbitron-Black.ttf
+          weight: 900
 

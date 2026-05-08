@@ -5,17 +5,16 @@ import 'package:flutter/material.dart';
 import '../config/game_config.dart';
 import '../flame_game.dart';
 import 'ui_manager.dart';
+import 'widgets/blackout_spotlight_overlay.dart';
+import 'widgets/door_failure_alarm_overlay.dart';
 import 'widgets/health_bar.dart';
 import 'widgets/heat_bar.dart';
-import 'widgets/weapon_slot.dart';
+import 'widgets/toxic_gas_overlay.dart';
 
 class GameHud extends StatefulWidget {
   final VoidRelayGame game;
 
   const GameHud({super.key, required this.game});
-
-  /// CLEANUP: set false to hide weapon slot HUD during Player animation testing.
-  static const bool debugShowWeaponHud = false;
 
   @override
   State<GameHud> createState() => _GameHudState();
@@ -44,21 +43,25 @@ class _GameHudState extends State<GameHud> {
 
   @override
   Widget build(BuildContext context) {
+    const neonCyan = Color(0xFF00D9FF);
+    const neonBlue = Color(0xFF1E6BFF);
     final health = _ui.readHealth(widget.game);
     final maxHealth = _ui.readMaxHealth(widget.game);
     final heat = _ui.readHeat(widget.game);
     final maxHeat = _ui.readMaxHeat();
     final activeWeaponName = _ui.readActiveWeaponName(widget.game);
     final activeWeaponSlot = _ui.readActiveWeaponSlot(widget.game);
-    final secondaryWeaponName = _ui.readSecondaryWeaponName(widget.game);
-    final secondaryWeaponSlot = _ui.readSecondaryWeaponSlot(widget.game);
     final objectivePrompt = _ui.readObjectivePrompt(widget.game);
+    final score = widget.game.score;
+    final exitBlockedMessage = widget.game.exitBlockedMessage;
     final isBlackoutActive = widget.game.isBlackoutActive;
     final isToxicGasActive = widget.game.isToxicGasActive;
+    final isDoorFailureActive = widget.game.isDoorFailureActive;
     final isSystemBreakdownActive = widget.game.isSystemBreakdownActive;
     final hazardSystem = widget.game.hazardSystem;
     final hazardProgress = hazardSystem?.currentEventProgress ?? 0.0;
     final isDeathSequenceActive = widget.game.isDeathSequenceActive;
+    final isPauseOpen = widget.game.isPauseOpen;
 
     return Stack(
       children: [
@@ -72,9 +75,17 @@ class _GameHudState extends State<GameHud> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.45),
+                      color: const Color(0xCC03111F),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.white24),
+                      border: Border.all(
+                        color: neonCyan.withValues(alpha: 0.8),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: neonBlue.withValues(alpha: 0.28),
+                          blurRadius: 18,
+                        ),
+                      ],
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -86,18 +97,70 @@ class _GameHudState extends State<GameHud> {
                           const SizedBox(height: 10),
                         ],
                         Container(
+                          width: 220,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 10,
                             vertical: 6,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.08),
+                            color: const Color(0x331A3350),
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.white24),
+                            border: Border.all(
+                              color: neonCyan.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          child: Text(
+                            'Weapon [$activeWeaponSlot]: $activeWeaponName',
+                            style: const TextStyle(
+                              fontFamily: 'Orbitron',
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: 220,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0x331A3350),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: neonCyan.withValues(alpha: 0.7),
+                            ),
+                          ),
+                          child: Text(
+                            'Score: $score',
+                            style: const TextStyle(
+                              fontFamily: 'Orbitron',
+                              color: Color(0xFFBDF4FF),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0x331A3350),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: neonCyan.withValues(alpha: 0.7),
+                            ),
                           ),
                           child: Text(
                             objectivePrompt,
                             style: const TextStyle(
+                              fontFamily: 'Orbitron',
                               color: Colors.white,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -107,114 +170,105 @@ class _GameHudState extends State<GameHud> {
                       ],
                     ),
                   ),
-                  const Spacer(),
-                  if (GameHud.debugShowWeaponHud)
-                    Align(
-                      alignment: Alignment.bottomLeft,
-                      child: WeaponSlot(
-                        activeWeaponName: activeWeaponName,
-                        activeWeaponSlot: activeWeaponSlot,
-                        secondaryWeaponName: secondaryWeaponName,
-                        secondaryWeaponSlot: secondaryWeaponSlot,
-                      ),
-                    ),
                 ],
               ),
             ),
           ),
         ),
-        // Blackout effect
-        if (isBlackoutActive)
-          IgnorePointer(
-            child: Container(
-              color: Colors.black.withValues(alpha: GameConfig.blackoutOpacity),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'BLACKOUT',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                      ),
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topRight,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 12, right: 12),
+              child: Material(
+                color: const Color(0xCC03111F),
+                borderRadius: BorderRadius.circular(10),
+                shadowColor: neonBlue.withValues(alpha: 0.35),
+                elevation: 8,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () {
+                    widget.game.playButtonClickSound();
+                    if (widget.game.isPauseOpen) {
+                      widget.game.resumeFromPause();
+                    } else {
+                      widget.game.triggerPause();
+                    }
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Systems offline',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.6),
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    // Progress indicator for blackout duration
-                    SizedBox(
-                      width: 200,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: hazardProgress,
-                          minHeight: 6,
-                          backgroundColor: Colors.white.withValues(alpha: 0.2),
-                          valueColor: AlwaysStoppedAnimation(
-                            Colors.red.withValues(alpha: 0.8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isPauseOpen ? Icons.play_arrow : Icons.pause,
+                          color: const Color(0xFF7DF9FF),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isPauseOpen ? 'Resume' : 'Pause',
+                          style: const TextStyle(
+                            fontFamily: 'Orbitron',
+                            color: Color(0xFFBDF4FF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
-        // Toxic gas effect
-        if (isToxicGasActive)
+        ),
+        if (isBlackoutActive)
+          BlackoutSpotlightOverlay(
+            game: widget.game,
+            opacity: GameConfig.blackoutOpacity,
+          ),
+        DoorFailureAlarmOverlay(isActive: isDoorFailureActive),
+        ClipRect(
+          child: ToxicGasOverlay(
+            isActive: isToxicGasActive,
+            progress: hazardProgress,
+            opacity: GameConfig.toxicGasOpacity,
+          ),
+        ),
+        if (exitBlockedMessage != null)
           IgnorePointer(
-            child: Container(
-              color: Colors.green.withValues(alpha: GameConfig.toxicGasOpacity),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'TOXIC GAS',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                      ),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: SafeArea(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 68),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xCC170512),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFFFF5A87).withValues(alpha: 0.95),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Taking damage - Find shelter!',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 14,
-                        fontStyle: FontStyle.italic,
-                      ),
+                    boxShadow: [
+                      BoxShadow(color: const Color(0xAAFF2E63), blurRadius: 18),
+                    ],
+                  ),
+                  child: Text(
+                    exitBlockedMessage,
+                    style: const TextStyle(
+                      fontFamily: 'Orbitron',
+                      color: Color(0xFFFFD4E2),
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.1,
                     ),
-                    const SizedBox(height: 20),
-                    // Progress indicator for toxic gas
-                    SizedBox(
-                      width: 200,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: hazardProgress,
-                          minHeight: 6,
-                          backgroundColor: Colors.white.withValues(alpha: 0.2),
-                          valueColor: AlwaysStoppedAnimation(
-                            Colors.green.withValues(alpha: 0.9),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -231,9 +285,9 @@ class _GameHudState extends State<GameHud> {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.22),
+                    color: const Color(0xCC03111F),
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.orangeAccent),
+                    border: Border.all(color: neonCyan.withValues(alpha: 0.8)),
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -241,7 +295,8 @@ class _GameHudState extends State<GameHud> {
                       const Text(
                         'SYSTEM BREAKDOWN',
                         style: TextStyle(
-                          color: Colors.white,
+                          fontFamily: 'Orbitron',
+                          color: Color(0xFF7DF9FF),
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.8,
@@ -250,7 +305,11 @@ class _GameHudState extends State<GameHud> {
                       const SizedBox(height: 6),
                       const Text(
                         'Activate switch console to restore systems',
-                        style: TextStyle(color: Colors.white70, fontSize: 11),
+                        style: TextStyle(
+                          fontFamily: 'Orbitron',
+                          color: Color(0xFFA7DDF4),
+                          fontSize: 11,
+                        ),
                       ),
                       const SizedBox(height: 6),
                       SizedBox(
@@ -260,7 +319,7 @@ class _GameHudState extends State<GameHud> {
                           minHeight: 5,
                           backgroundColor: Colors.white.withValues(alpha: 0.18),
                           valueColor: const AlwaysStoppedAnimation<Color>(
-                            Colors.orangeAccent,
+                            neonCyan,
                           ),
                         ),
                       ),
@@ -280,6 +339,7 @@ class _GameHudState extends State<GameHud> {
                 child: Text(
                   'YOU DIE',
                   style: TextStyle(
+                    fontFamily: 'Orbitron',
                     color: Colors.white,
                     fontSize: 56,
                     fontWeight: FontWeight.w900,
@@ -290,6 +350,7 @@ class _GameHudState extends State<GameHud> {
               ),
             ),
           ),
+        // Drone debug controls moved to keyboard hotkeys.
       ],
     );
   }

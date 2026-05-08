@@ -90,7 +90,8 @@ Asset load failed:
 assets/sprites/enemies/
 ├── .gitkeep
 ├── crawler_sheet.png      ✅ існує
-├── hover_drone_sheet.png  ✅ існує
+├── drone_idle.png         ✅ існує
+├── drone_idle_atlas.json  ✅ існує
 ├── sentry_turret_sheet.png ❌ MISSING
 └── turret_sheet.png       ❌ MISSING
 ```

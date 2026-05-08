@@ -193,5 +193,182 @@ void main() {
       expect(player.position.y, closeTo(408, 0.001));
       expect(player.velocity.x, closeTo(0, 0.001));
     });
+
+    test(
+      'large dt falling steps do not tunnel through floor over time',
+      () async {
+        final player = PlayerComponent();
+        await player.onLoad();
+
+        final floor = PlatformComponent(
+          position: Vector2(480, 490),
+          size: Vector2(960, 100),
+        );
+
+        final collisions = CollisionHandler(player: player, platforms: [floor]);
+
+        player.position = Vector2(260, 408); // standing on floor top=440
+        player.velocity = Vector2.zero();
+        player.isOnGround = true;
+
+        const dt = 0.12;
+        for (var i = 0; i < 12; i++) {
+          // Emulate player physics integration before collision phase.
+          player.velocity.y += 900 * dt;
+          player.position += player.velocity * dt;
+          collisions.update(dt);
+
+          expect(player.position.y, closeTo(408, 0.001));
+          expect(player.velocity.y, closeTo(0, 0.001));
+          expect(player.isOnGround, isTrue);
+        }
+      },
+    );
+
+    test('lag spike dt=0.5 still lands on platform (no fall-through)', () async {
+      final player = PlayerComponent();
+      await player.onLoad();
+
+      final floor = PlatformComponent(
+        position: Vector2(480, 490),
+        size: Vector2(960, 100),
+      );
+
+      // Simulate severe frame hitch: large velocity + one huge integration step.
+      player.position = Vector2(200, 408);
+      player.velocity = Vector2(0, 500);
+      player.isOnGround = true;
+
+      final collisions = CollisionHandler(player: player, platforms: [floor]);
+
+      const dt = 0.5;
+      player.velocity.y += 900 * dt;
+      player.position += player.velocity * dt;
+      collisions.update(dt);
+
+      expect(player.position.y, closeTo(408, 0.001));
+      expect(player.velocity.y, closeTo(0, 0.001));
+      expect(player.isOnGround, isTrue);
+    });
+
+    test('jump/fall onto moved platform still lands correctly', () async {
+      final player = PlayerComponent();
+      await player.onLoad();
+
+      final platform = PlatformComponent(
+        position: Vector2(480, 490),
+        size: Vector2(960, 100),
+      );
+      await platform.onLoad();
+
+      // Platform moved this frame (simulate flying/moving platform update).
+      platform.position = Vector2(500, 470);
+
+      player.position = Vector2(500, 420);
+      player.velocity = Vector2(0, 420);
+      player.isOnGround = false;
+
+      final collisions = CollisionHandler(
+        player: player,
+        platforms: [platform],
+      );
+      collisions.update(0.2);
+
+      final top = platform.toRect().top;
+      expect(player.position.y, closeTo(top - player.size.y / 2, 0.001));
+      expect(player.velocity.y, closeTo(0, 0.001));
+      expect(player.isOnGround, isTrue);
+    });
+
+    test('jump/fall onto moved platform with dt=0.5 still lands', () async {
+      final player = PlayerComponent();
+      await player.onLoad();
+
+      final platform = PlatformComponent(
+        position: Vector2(520, 500),
+        size: Vector2(960, 100),
+      );
+      await platform.onLoad();
+
+      platform.position = Vector2(560, 460);
+
+      player.position = Vector2(560, 410);
+      player.velocity = Vector2(0, 500);
+      player.isOnGround = false;
+
+      final collisions = CollisionHandler(
+        player: player,
+        platforms: [platform],
+      );
+      collisions.update(0.5);
+
+      final top = platform.toRect().top;
+      expect(player.toRect().bottom, closeTo(top, 1.0));
+      expect(player.velocity.y, closeTo(0, 0.001));
+      expect(player.isOnGround, isTrue);
+    });
+
+    test(
+      'player is carried by moving platform vertical and horizontal delta',
+      () async {
+        final player = PlayerComponent();
+        await player.onLoad();
+
+        final platform = PlatformComponent(
+          position: Vector2(300, 490),
+          size: Vector2(300, 100),
+        );
+        await platform.onLoad();
+
+        final collisions = CollisionHandler(
+          player: player,
+          platforms: [platform],
+        );
+
+        // Start standing on platform.
+        player.position = Vector2(300, 408);
+        player.velocity = Vector2.zero();
+        player.isOnGround = true;
+        collisions.update(1 / 60);
+
+        // Move platform this frame and ensure player follows platform delta.
+        platform.position = Vector2(340, 515);
+        collisions.update(1 / 60);
+
+        final platformRect = platform.toRect();
+        expect(player.position.x, closeTo(340, 0.001));
+        expect(
+          player.position.y,
+          closeTo(platformRect.top - player.size.y / 2, 0.001),
+        );
+        expect(player.isOnGround, isTrue);
+        expect(player.velocity.y, closeTo(0, 0.001));
+      },
+    );
+
+    test(
+      'post-load like state on platform remains stable with lag dt',
+      () async {
+        final player = PlayerComponent();
+        await player.onLoad();
+
+        final floor = PlatformComponent(
+          position: Vector2(480, 490),
+          size: Vector2(960, 100),
+        );
+
+        // Simulate load placing player near floor top.
+        player.position = Vector2(220, 406);
+        player.velocity = Vector2(0, 80);
+        player.isOnGround = true;
+
+        final collisions = CollisionHandler(player: player, platforms: [floor]);
+        collisions.update(0.2);
+
+        expect(player.position.y, closeTo(408, 0.001));
+        expect(player.velocity.y, closeTo(0, 0.001));
+        expect(player.isOnGround, isTrue);
+      },
+    );
   });
 }
